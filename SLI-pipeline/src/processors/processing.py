@@ -12,8 +12,6 @@ from netCDF4 import default_fillvals  # pylint: disable=no-name-in-module
 
 log = logging.getLogger(__name__)
 
-CYCLE_LENGTH = 10
-
 
 def md5(fpath):
     """
@@ -112,7 +110,7 @@ def process_along_track(cycle_granules, ds_meta, dates):
         ds = ds.rename({'lats': 'Latitude', 'lons': 'Longitude'})
 
         ds = ds.drop([var for var in ds.data_vars if var[0] == '_'])
-        ds = ds.drop_vars(['ssh'])
+        ds = ds.drop_vars(['ssh', 'sat_id', 'sea_ice', 'track_id'])
         ds = ds.assign_coords(Time=('Time', ds.Time))
         ds = ds.assign_coords(Latitude=ds.Latitude)
         ds = ds.assign_coords(Longitude=ds.Longitude)
@@ -211,228 +209,6 @@ def process_measures_grids(cycle_granules, ds_meta, dates):
     }
 
     return cycle_ds, 1
-
-
-def process_gps(cycle_granules, ds_meta, dates):
-    """
-    Processes and aggregates individual granules that fall within a cycle's date range for
-    Shalin's gps along track dataset.
-
-    Dataset's netCDF files change format from 2020-10-29 onward. Groups are used beyond that date.
-
-    Params:
-        cycle_granules (List[dict]): the dataset specific config file
-        ds_meta (dict): the list of docs to update on Solr
-        dates (Tuple[str, str, str]):
-
-    Returns:
-        cycle_ds (Dataset): the processed cycle Dataset object
-        1 (int): the number of granules within the processed cycle Dataset object
-    """
-    def testing(ds, var):
-        """
-        Performs mean, rms, std, offset, and amplitude tests for a granule and includes
-        their results as individual Dataarrays within the Dataset object.
-
-        Params:
-            ds (Dataset): data granule
-            var (str): the datavar on which to perform the tests
-
-        Returns:
-            ds (Dataset): Dataset object with testing Dataarrays added
-
-        """
-        non_nan_vals = ds[var].values[~np.isnan(ds[var].values)]
-
-        mean = np.nanmean(ds[var].values)
-        rms = np.sqrt(np.mean(non_nan_vals**2))
-        std = np.std(non_nan_vals)
-
-        try:
-            offset, amplitude = delta_orbit_altitude_offset_amplitude(ds.time, ds.ssha, ds[var])
-        except:
-            log.exception('Offset and amplitude calculation error.')
-            offset = 100
-            amplitude = 100
-
-        tests = [('Mean', mean), ('RMS', rms), ('STD', std),
-                 ('Offset', offset), ('Amplitude', amplitude)]
-
-        for (test, result) in tests:
-            test_array = np.full(len(ds[var]), result, dtype='float32')
-            ds[test] = xr.DataArray(test_array, ds[var].coords, ds[var].dims)
-            ds[test].attrs['comment'] = f'{test} test value from original granule in cycle.'
-
-        return ds
-
-    def delta_orbit_altitude_offset_amplitude(time_da, ssha_da, gps_ssha_da):
-        """
-        delta orbit altitude between the GPS orbit altitude
-        and DORIS orbit altitude
-        ssh = orbit_altitude - range - corrections
-
-        in Shailen's SSH files, there is both 'gps_ssha', and 'ssha'
-
-        gps_ssha - ssha = delta orbit_altitude
-           because range and corrections are the same for both ssha fields
-
-        therefore we seek a solution the following equation
-        y = C0 +  C1 cos(omega t) + C2 sin(omega t)
-
-        where
-        y      : delta GPS orbit altitude
-        C0     : OFFSET
-        C1, C2 : AMPLITUDES of cosine and sine terms comprising a phase shifted oscillation
-        omega  : period of one orbit resolution in seconds
-        t      : time in seconds
-
-        Params:
-            time_da (DataArray): time DataArray from the Dataset object being tested
-            ssha_da (DataArray): ssha DataArray from the Dataset object being tested
-            gps_ssha_da (DataArray): gps adjusted ssha DataArray from the Dataset object being tested
-
-        Returns:
-            offset (float):
-            amplitude (float):
-
-        """
-
-        # calculate delta orbit altitude
-        delta_orbit_altitude = gps_ssha_da.values - ssha_da.values
-
-        # calculate time (in seconds) from the first to last observations in record
-        if isinstance(time_da.values[0], np.datetime64):
-            time_data = (time_da.values - time_da[0].values)/1e9
-            time_data = time_data.astype('float')
-        else:
-            time_data = time_da.values
-
-        # calculate omega * t
-        omega = 2.*np.pi/6745.756
-        omega_t = omega * time_data
-
-        # pull values of omega_t and the delta_orbit_altitude only where
-        # the delta_orbit_altitude is not nan (i.e., not missing)
-        omega_t_nn = omega_t[~np.isnan(delta_orbit_altitude)]
-        delta_orbit_altitude_nn = delta_orbit_altitude[~np.isnan(delta_orbit_altitude)]
-
-        # Least squares solution will take the form:
-        # c = inv(A.T A) A.T  delta_orbit_altitude.T
-        # where *.T indicates transpose
-        # inv indicates matrix inverse
-        # the three columns of the A matrix
-        CONST_TERM = np.ones(len(omega_t_nn))
-        COS_TERM = np.cos(omega_t_nn)
-        SIN_TERM = np.sin(omega_t_nn)
-
-        # construct A matrix
-        A = np.column_stack((CONST_TERM, COS_TERM, SIN_TERM))
-        c = np.matmul(np.matmul(np.linalg.inv(np.matmul(A.T, A)), A.T), delta_orbit_altitude_nn.T)
-
-        offset = c[0]
-        amplitude = np.sqrt(c[1]**2 + c[2]**2)
-
-        return offset, amplitude
-
-    # List of flags to use for data masking
-    flags = ['rad_surface_type_flag', 'surface_classification_flag', 'alt_qual',
-             'rad_qual', 'geo_qual', 'meteo_map_availability_flag', 'rain_flag',
-             'rad_rain_flag', 'ice_flag', 'rad_sea_ice_flag', 'rad_surf_type',
-             'surface_type', 'alt_quality_flag', 'rad_quality_flag',
-             'geophysical_quality_flag', 'ecmwf_meteo_map_avail']
-
-    var = 'gps_ssha'
-    tests = ['Mean', 'RMS', 'STD', 'Offset', 'Amplitude']
-    granules = []
-    data_start_time = None
-    data_end_time = None
-
-    for granule in cycle_granules:
-        uses_groups = False
-
-        ds = xr.open_dataset(granule['granule_file_path_s'])
-
-        if 'lon' in ds.coords:
-            ds = ds.rename({'lon': 'Longitude', 'lat': 'Latitude'})
-            ds[var].encoding['coordinates'] = 'Longitude Latitude'
-            ds_keys = list(ds.keys())
-        else:
-            uses_groups = True
-
-            ds = xr.open_dataset(granule['granule_file_path_s'], group='data_01/ku')
-            ds_flags = xr.open_dataset(granule['granule_file_path_s'], group='data_01')
-            ds_flags = ds_flags.rename({'longitude': 'Longitude', 'latitude': 'Latitude'})
-            ds = ds.assign_coords({"Longitude": ds_flags.Longitude, "Latitude": ds_flags.Latitude})
-
-            ds_keys = list(ds_flags.keys())
-
-        # Remove outliers before running tests
-        ds[var].values[np.greater(abs(ds[var].values), 1.5, where=~
-                                  np.isnan(ds[var].values))] = np.nan
-
-        # Run tests, returns byte results convert to int
-        ds = testing(ds, var)
-
-        # Mask out flagged data
-        for flag in flags:
-            if flag in ds_keys:
-                if uses_groups:
-                    if np.isnan(ds_flags[flag].values).all():
-                        continue
-
-                    ds[var].values = np.where(ds_flags[flag].values == 0, ds[var].values,
-                                              default_fillvals['f8'])
-                else:
-                    if np.isnan(ds[flag].values).all():
-                        continue
-                    ds[var].values = np.where(ds[flag].values == 0, ds[var].values,
-                                              default_fillvals['f8'])
-
-        # Replace nans with fill value
-        ds[var].values = np.where(np.isnan(ds[var].values), default_fillvals['f8'], ds[var].values)
-
-        ds = ds.drop([key for key in ds.keys() if key not in tests + [var]])
-
-        ds = ds.rename_dims({'time': 'Time'})
-        ds = ds.rename({'time': 'Time'})
-        ds = ds.rename_vars({var: 'SSHA'})
-
-        data_start_time = min(
-            data_start_time, ds.Time.values[0]) if data_start_time else ds.Time.values[0]
-        data_end_time = max(
-            data_end_time, ds.Time.values[-1]) if data_end_time else ds.Time.values[-1]
-
-        granules.append(ds)
-
-     # Merge
-    cycle_ds = xr.concat((granules), dim='Time')
-
-    # Center time
-    data_center_time = data_start_time + ((data_end_time - data_start_time)/2)
-
-    # Var Attributes
-    cycle_ds['SSHA'].attrs['valid_min'] = np.nanmin(cycle_ds['SSHA'].values)
-    cycle_ds['SSHA'].attrs['valid_max'] = np.nanmax(cycle_ds['SSHA'].values)
-
-    # Time Attributes
-    cycle_ds.Time.attrs['long_name'] = 'Time'
-
-    # Global Attributes
-    cycle_ds.attrs = {
-        'title': 'Ten day aggregated GPSOGDR - Reduced dataset',
-        'cycle_start': dates[0],
-        'cycle_center': dates[1],
-        'cycle_end': dates[2],
-        'data_time_start': str(data_start_time)[:19],
-        'data_time_center': str(data_center_time)[:19],
-        'data_time_end': str(data_end_time)[:19],
-        'original_dataset_title': ds_meta['original_dataset_title_s'],
-        'original_dataset_short_name': ds_meta['original_dataset_short_name_s'],
-        'original_dataset_url': ds_meta['original_dataset_url_s'],
-        'original_dataset_reference': ds_meta['original_dataset_reference_s']
-    }
-
-    return cycle_ds, len(granules)
 
 
 def collect_granules(ds_name, dates, date_strs, config):
@@ -628,6 +404,11 @@ def processing(config, output_path, reprocess):
     index_type = config['index_type']
     date_regex = '%Y-%m-%dT%H:%M:%S'
 
+    if '1812' in ds_name:
+        CYCLE_LENGTH = 5
+    else:
+        CYCLE_LENGTH = 10
+
     # Query for dataset metadata
     try:
         ds_metadata = solr_query(config, ['type_s:dataset', f'dataset_s:{ds_name}'])[0]
@@ -687,8 +468,7 @@ def processing(config, output_path, reprocess):
             print(f'Processing cycle {start_date_str} to {end_date_str}')
 
             funcs = {'measures_grids': process_measures_grids,
-                     'along_track': process_along_track,
-                     'gps': process_gps}
+                     'along_track': process_along_track}
 
             # ======================================================
             # Process the cycle

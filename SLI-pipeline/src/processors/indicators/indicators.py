@@ -17,8 +17,6 @@ import xesmf as xe
 # from netCDF4 import default_fillvals
 from pyresample.utils import check_and_wrap
 from scipy.optimize import leastsq
-import cartopy.crs as crs
-import cartopy.feature as cfeature
 from pyresample.kd_tree import resample_gauss
 
 log = logging.getLogger(__name__)
@@ -130,7 +128,7 @@ def calc_grid_climate_index(agg_ds, pattern, pattern_ds, ann_cyc_in_pattern, wei
 
     pattern_field = pattern_ds[pattern][f'{pattern}_pattern'].values
 
-    ds_in = agg_ds[f'SSHA_{pattern}_removed_global_spatial_mean'].rename(
+    ds_in = agg_ds[f'SSHA_{pattern}_removed_global_linear_trend'].rename(
         {'Longitude': 'lon', 'Latitude': 'lat'})
 
     ds_out = pattern_ds[pattern][f'{pattern}_pattern'].rename(
@@ -218,6 +216,21 @@ def calc_grid_climate_index(agg_ds, pattern, pattern_ds, ann_cyc_in_pattern, wei
         offset_b = B_hat[0]
         index_b = B_hat[1]
 
+    elif method == 3:
+        X = np.vstack(np.array(pattern_to_fit))
+
+        # Good old Gauss
+        B_hat = np.matmul(np.matmul(np.linalg.inv(np.matmul(X.T, X)), X.T),
+                          ssha_anom_to_fit.T)
+        offset = 0
+        index = B_hat[0]
+
+        # now minimize ssha_to_fit
+        B_hat = np.matmul(np.matmul(np.linalg.inv(np.matmul(X.T, X)), X.T),
+                          ssha_to_fit.T)
+        offset_b = 0
+        index_b = B_hat[0]
+
     LS_result = [offset, index, offset_b, index_b]
 
     lats = ssha_to_pattern_da.lat.values
@@ -247,11 +260,10 @@ def calc_at_climate_index(agg_ds,
 
     # determine its month
     agg_ds_center_mon = int(str(ct)[5:7])
-    print(ct, agg_ds_center_mon)
 
     pattern_field = pattern_ds[pattern][f'{pattern}_pattern']
 
-    ssha_anom = agg_ds[f'SSHA_{pattern}_removed_global_spatial_mean'] - \
+    ssha_anom = agg_ds[f'SSHA_{pattern}_removed_global_linear_trend'] - \
         ann_cyc_in_pattern[pattern].ann_pattern.sel(month=agg_ds_center_mon)/1e3
 
     # set ssha_anom to nan wherever the original pattern is nan
@@ -268,7 +280,7 @@ def calc_at_climate_index(agg_ds,
 
     # ssha without removing the anomaly
     ssha_to_fit = agg_ds.copy(deep=True)
-    ssha_to_fit = agg_ds[f'SSHA_{pattern}_removed_global_spatial_mean'].values[nn]
+    ssha_to_fit = agg_ds[f'SSHA_{pattern}_removed_global_linear_trend'].values[nn]
 
     if method == 1:
         # Method 1, use scipy's least squares:
@@ -362,10 +374,9 @@ def interp_ssha_points_to_pattern(pattern_area_def,
     ssha_nn = ssha[~np.isnan(ssha)]
 
     if np.sum(~np.isnan(ssha_nn)) > 0:
-        print(1)
         tmp_ssha_lons, tmp_ssha_lats = check_and_wrap(ssha_lon_nn.ravel(),
                                                       ssha_lat_nn.ravel())
-        print(2)
+
         ssha_grid = pr.geometry.SwathDefinition(lons=tmp_ssha_lons, lats=tmp_ssha_lats)
 
         ssha_pts_to_pattern = resample_gauss(ssha_grid, ssha_nn,
@@ -409,6 +420,13 @@ def indicators(config, output_path, reprocess=False):
     # Query for update cycles after modified_time
     fq = ['type_s:cycle', 'processing_success_b:true',
           f'processing_time_dt:[{modified_time} TO NOW]']
+
+    # TODO: this is for development
+    # gridded cycles through 2016, along track from 2017 - 2019
+    # fq = ['(type_s:cycle AND dataset_s:*rads* AND processing_success_b:true)']
+    fq = ['(type_s:cycle AND dataset_s:*rads* AND processing_success_b:true) OR (type_s:cycle AND \
+    dataset_s:*1812* AND start_date_dt:[2005-01-01T00:00:00Z TO 2016-12-31T00:00:00Z] AND processing_success_b:true)']
+
     updated_cycles = solr_query(config, fq, sort='start_date_dt asc')
 
     # ONLY PROCEED IF THERE ARE CYCLES NEEDING CALCULATING
@@ -416,13 +434,10 @@ def indicators(config, output_path, reprocess=False):
         print('No cycles modified since last index calculation.')
         return
 
-    # Group together along track cycles with the same dates
-    grid_cycles = [cycle for cycle in updated_cycles if cycle['index_type_s'] == 'gridded']
-    grid_cycle_starts = {cycle['start_date_dt'] for cycle in grid_cycles}
-
-    at_cycles = [cycle for cycle in updated_cycles if cycle['index_type_s'] == 'along_track']
-    at_cycle_starts = {cycle['start_date_dt'] for cycle in at_cycles}
-    at_cycle_starts = sorted(at_cycle_starts)
+    # TODO: Modify to select gridded data when available
+    updated_cycle_dict = defaultdict(list)
+    for updated_cycle in updated_cycles:
+        updated_cycle_dict[updated_cycle['start_date_dt']].append(updated_cycle)
 
     time_format = "%Y-%m-%dT%H:%M:%S"
 
@@ -495,28 +510,43 @@ def indicators(config, output_path, reprocess=False):
     # THE MAIN LOOP
     ############################
 
-    # List to hold DataSet objects for each pattern
-    all_indicators = []
-    all_patterns_and_anoms = []
-    all_globals = []
-
     # key (pattern) : value (list of DAs with index at a single time)
-    indicators_agg_das = defaultdict(list)
-    spatial_mean_das = []
-    offset_agg_das = defaultdict(list)
-    pattern_and_anom_das = defaultdict(list)
-    global_dss = []
+    # indicators_agg_das = defaultdict(list)
+    indicators_agg_das = {}
+    offset_agg_das = {}
+    pattern_and_anom_das = {}
+    spatial_mean_da = None
+    global_ds = None
 
-    for cycle in grid_cycles:
-        agg_file = cycle['filepath_s']
+    for key in updated_cycle_dict.keys():
+        cycles_in_range = updated_cycle_dict[key]
+
+        if len(cycles_in_range) == 1:
+            cycle = cycles_in_range[0]
+            cycle_ds = xr.open_dataset(cycle['filepath_s'])
+        else:
+            flag = True
+            for cycle_meta in cycles_in_range:
+                if '1812' in cycle_meta['dataset_s']:
+                    cycle = cycle_meta
+                    cycle_ds = xr.open_dataset(cycle['filepath_s'])
+                    flag = False
+            if flag:
+                ats = []
+                for cycle_meta in cycles_in_range:
+                    ds = xr.open_dataset(cycle_meta['filepath_s'])
+                    ats.append(ds)
+
+                cycle_ds = xr.concat(ats, 'Time')
+                cycle_ds = cycle_ds.sortby('Time')
+                cycle = cycle_meta
+
+        cycle_ds.close()
         cycle_type = cycle['index_type_s']
-        date = agg_file[-18:-10]
+        date = cycle['filepath_s'][-18:-10]
         date = f'{date[:4]}-{date[4:6]}-{date[6:8]}'
 
         print(f' - Calculating index values for {date}')
-
-        cycle_ds = xr.open_dataset(agg_file)
-        cycle_ds.close()
 
         if 'cycle_center' in cycle_ds.attrs:
             ct = np.datetime64(cycle_ds.cycle_center)
@@ -524,23 +554,36 @@ def indicators(config, output_path, reprocess=False):
         elif 'time_center' in cycle_ds.attrs:
             ct = np.datetime64(cycle_ds.time_center)
 
-        indicators_agg_da = None
-        offsets_agg_da = None
+        if cycle_type == 'along_track':
+            # Use roi=2e5, sigma=1e5, neighbours=1000 for final version
+            ssha_lon_nn, ssha_lat_nn, sha_nn, ssha_to_pattern_da = interp_ssha_points_to_pattern(pattern_area_defs['global'],
+                                                                                                 cycle_ds.SSHA.values.ravel(),
+                                                                                                 cycle_ds.SSHA.Longitude.values.ravel(),
+                                                                                                 cycle_ds.SSHA.Latitude.values.ravel(),
+                                                                                                 roi=4e5, sigma=1e5, neighbours=5)
+        else:
+            ds_in = (cycle_ds['SSHA'].rename(
+                {'Longitude': 'lon', 'Latitude': 'lat'}).isel(Time=0)).T
+            ds_out = ecco_latlon_grid.rename({'latitude': 'lat', 'longitude': 'lon'})
 
-        ds_in = (cycle_ds['SSHA'].rename({'Longitude': 'lon', 'Latitude': 'lat'}).isel(Time=0)).T
-        ds_out = ecco_latlon_grid.rename({'latitude': 'lat', 'longitude': 'lon'})
+            # Regridder has a habit of zeroing nans outside of min/max lats
+            ds_in_max_lat = np.max(ds_in.lat.values.ravel())
+            ds_in_min_lat = np.min(ds_in.lat.values.ravel())
 
-        weight_fp = f'{weights_dir}/1812_to_global.nc'
-        if not os.path.exists(weight_fp):
-            print(f'Creating global weight file.')
+            weight_fp = f'{weights_dir}/1812_to_global.nc'
+            if not os.path.exists(weight_fp):
+                print('Creating global weight file.')
 
-        # HiddenPrints class keeps xesmf.Regridder from printing details about weights
-        with HiddenPrints():
-            regridder = xe.Regridder(ds_in, ds_out, 'bilinear',
-                                     filename=weight_fp, reuse_weights=True)
+            # HiddenPrints class keeps xesmf.Regridder from printing details about weights
+            with HiddenPrints():
+                regridder = xe.Regridder(ds_in, ds_out, 'bilinear',
+                                         filename=weight_fp, reuse_weights=True)
 
-        ssha_to_pattern_da = regridder(ds_in)
-        ssha_to_pattern_da = ssha_to_pattern_da.assign_coords(coords={'time': ct})
+            ssha_to_pattern_da = regridder(ds_in)
+            ssha_to_pattern_da = ssha_to_pattern_da.assign_coords(coords={'time': ct})
+
+            ssha_to_pattern_da = ssha_to_pattern_da.where(ssha_to_pattern_da.lat < ds_in_max_lat)
+            ssha_to_pattern_da = ssha_to_pattern_da.where(ssha_to_pattern_da.lat > ds_in_min_lat)
 
         global_da = xr.DataArray(ssha_to_pattern_da, dims=['latitude', 'longitude'],
                                  coords={'longitude': global_lon,
@@ -549,190 +592,151 @@ def indicators(config, output_path, reprocess=False):
         global_da = global_da.assign_coords(coords={'Time': np.datetime64(cycle_ds.cycle_center)})
 
         global_dam = global_da.where(ecco_latlon_grid.maskC.isel(Z=0) > 0)
+        global_dam.name = 'SSHA_GLOBAL'
+        global_dam.attrs = {
+            'comment': 'Global SSHA land masked using ECCO lat/lon grid'}
+        global_dsm = global_dam.to_dataset()
+
+        # Spatial Mean
         nzp = np.where(~np.isnan(global_dam), 1, np.nan)
         area_nzp = np.sum(nzp * ecco_latlon_grid.area)
-
         spatial_mean = float(np.nansum(global_dam * ecco_latlon_grid.area) / area_nzp)
         mean_da = xr.DataArray(spatial_mean, coords={'time': ct})
         mean_da.name = 'spatial_mean'
-        spatial_mean_das.append(mean_da)
+        mean_da.attrs = {'comment': 'Global SSHA spatial mean'}
+
+        if spatial_mean_da is not None:
+            spatial_mean_da = xr.concat([spatial_mean_da, mean_da], 'time')
+        else:
+            spatial_mean_da = mean_da
 
         global_dam_removed_mean = global_dam - spatial_mean
+        global_dam_removed_mean.attrs = {'comment': 'Global SSHA with global spatial mean removed'}
+        global_dsm['SSHA_GLOBAL_removed_global_spatial_mean'] = global_dam_removed_mean
 
-        # Make dataset with global_da and global_dam_removed_mean
-        global_dam.name = 'SSHA_GLOBAL'
-        global_ds = global_dam.to_dataset()
-        global_ds['SSHA_GLOBAL_removed_global_spatial_mean'] = global_dam_removed_mean
-        global_ds = global_ds.drop_vars('Z')
+        # Linear Trend
+        trend_ds = xr.open_dataset(bh_dir / 'pointwise_sealevel_trend.nc')
+        # time_diff = (global_da.Time.values - np.datetime64('1992-10-02')
+        #              ).astype(np.int32)/3.1536e+16
+        # trend = (time_diff * trend_ds['pointwise_sealevel_trend']*1000) + trend_ds['pointwise_sealevel_offset']
 
-        global_dss.append(global_ds)
+        time_diff = (global_da.Time.values - np.datetime64('1992-10-02')
+                     ).astype(np.int32)/1e9
 
-        method = 2
+        trend = (time_diff * trend_ds['pointwise_sealevel_trend']) + \
+            trend_ds['pointwise_sealevel_offset']
+
+        global_dam_detrended = global_dam - trend
+        global_dam_detrended.attrs = {'comment': 'Global SSHA with linear trend removed'}
+        global_dsm['SSHA_GLOBAL_removed_linear_trend'] = global_dam_detrended
+
+        global_dsm = global_dsm.drop_vars('Z')
+
+        if global_ds is not None:
+            global_ds = xr.concat([global_ds, global_dsm], dim='Time')
+        else:
+            global_ds = global_dsm
+        global_dsm.close()
+
+        method = 3
 
         for pattern in patterns:
-
             pattern_lats = pattern_ds[pattern]['Latitude']
             pattern_lons = pattern_ds[pattern]['Longitude']
             pattern_lons, pattern_lats = check_and_wrap(pattern_lons, pattern_lats)
 
-            agg_da = global_dam_removed_mean.sel(longitude=pattern_lons, latitude=pattern_lats)
-            agg_da.name = f'SSHA_{pattern}_removed_global_spatial_mean'
-            agg_da = agg_da.assign_coords(coords={'Time': np.datetime64(cycle_ds.cycle_center)})
+            # Calculate pattern mean sea level
+            # pattern_area_dam = global_dam.sel(longitude=pattern_lons, latitude=pattern_lats)
+            # pattern_nzp = np.where(~np.isnan(pattern_area_dam), 1, np.nan)
+            # pattern_ecco_latlon_grid = ecco_latlon_grid.sel(longitude=pattern_lons,
+            #                                                 latitude=pattern_lats)
+            # pattern_area_nzp = np.sum(pattern_nzp * pattern_ecco_latlon_grid.area)
 
+            # pattern_area_spatial_mean = float(
+            #     np.nansum(pattern_area_dam * pattern_ecco_latlon_grid.area) / pattern_area_nzp)
+
+            agg_da = global_dam_detrended.sel(longitude=pattern_lons, latitude=pattern_lats)
+            agg_da.name = f'SSHA_{pattern}_removed_global_linear_trend'
+            agg_da = agg_da.assign_coords(coords={'Time': np.datetime64(cycle_ds.cycle_center)})
             agg_ds = agg_da.to_dataset()
             agg_ds.attrs = cycle_ds.attrs
 
-            index_calc, ct, ssha_anom = calc_grid_climate_index(agg_ds, pattern, pattern_ds,
-                                                                ann_cyc_in_pattern, weights_dir, method=method)
+            if cycle_type == 'along_track':
+                index_calc, ct,  ssha_anom = calc_at_climate_index(agg_ds, pattern, pattern_ds,
+                                                                   ann_cyc_in_pattern,
+                                                                   method=method)
+            else:
+                index_calc, ct, ssha_anom = calc_grid_climate_index(agg_ds, pattern, pattern_ds,
+                                                                    ann_cyc_in_pattern, weights_dir,
+                                                                    method=method)
+                ssha_anom = ssha_anom.rename({'latitude': 'Latitude', 'longitude': 'Longitude'})
 
-            anom_name = f'SSHA_{pattern}_removed_global_spatial_mean_and_seasonal_cycle'
+            anom_name = f'SSHA_{pattern}_removed_global_linear_trend_and_seasonal_cycle'
             ssha_anom.name = anom_name
-
+            ssha_anom.attrs = {}
             agg_ds[anom_name] = ssha_anom
-            agg_ds = agg_ds.drop_vars(['Z', 'latitude', 'longitude'])
-            agg_ds = agg_ds.drop_dims(['latitude', 'longitude'])
 
-            pattern_and_anom_das[pattern].append(agg_ds)
+            try:
+                agg_ds = agg_ds.drop_vars(['Z', 'latitude', 'longitude'])
+                agg_ds = agg_ds.drop_dims(['latitude', 'longitude'])
+            except Exception:
+                pass
+
+            if pattern in pattern_and_anom_das.keys():
+                pattern_and_anom_das[pattern] = xr.concat(
+                    [pattern_and_anom_das[pattern], agg_ds], 'Time')
+            else:
+                pattern_and_anom_das[pattern] = agg_ds
+            agg_ds.close()
 
             # create a DataArray Object with a single scalar value, the index
             # for this pattern at this one time.
             indicator_da = xr.DataArray(index_calc[1], coords={'time': ct})
             indicator_da.name = f'{pattern}_index'
-            indicators_agg_das[pattern].append(indicator_da)
+            if pattern in indicators_agg_das.keys():
+                indicators_agg_das[pattern] = xr.concat(
+                    [indicators_agg_das[pattern], indicator_da], 'time')
+            else:
+                indicators_agg_das[pattern] = indicator_da
+            indicator_da.close()
 
             # create a DataArray Object with a single scalar value, the
             # the offset of the climate indices (the constant term in the
             # least squares fit, not really interesting but maybe good to have)
             offsets_da = xr.DataArray(index_calc[0], coords={'time': ct})
             offsets_da.name = f'{pattern}_offset'
-            offset_agg_das[pattern].append(offsets_da)
+            if pattern in offset_agg_das.keys():
+                offset_agg_das[pattern] = xr.concat([offset_agg_das[pattern], offsets_da], 'time')
+            else:
+                offset_agg_das[pattern] = offsets_da
+            offsets_da.close()
 
-    # Loop through unique cycle dates
-    for cycle_start in at_cycle_starts:
+            cycle_ds.close()
 
-        # Get all along track cycles with this date
-        fq = ['type_s:cycle', 'processing_success_b:true', 'index_type_s:along_track',
-              f'start_date_dt:[{cycle_start} TO {cycle_start}]']
-        same_period_cycles = solr_query(config, fq)
-
-        # Concat and sort all along track cycles with the same cycle period
-        ats = []
-        for cycle in same_period_cycles:
-            ds = xr.open_dataset(cycle['filepath_s'])
-            ats.append(ds)
-
-        at_ds = xr.concat(ats, 'Time')
-        at_ds = at_ds.sortby('Time')
-
-        if 'cycle_center' in at_ds.attrs:
-            ct = np.datetime64(at_ds.cycle_center)
-
-        elif 'time_center' in at_ds.attrs:
-            ct = np.datetime64(at_ds.time_center)
-
-        # Prepare global versions
-        ssha_lon_nn, ssha_lat_nn, sha_nn, ssha_pts_to_pattern = \
-            interp_ssha_points_to_pattern(pattern_area_defs['global'],
-                                          at_ds.SSHA.values.ravel(),
-                                          at_ds.SSHA.Longitude.values.ravel(),
-                                          at_ds.SSHA.Latitude.values.ravel(),
-                                          roi=4e5, sigma=1.5e5, neighbours=5)
-
-        global_da = xr.DataArray(ssha_pts_to_pattern, dims=['latitude', 'longitude'],
-                                 coords={'longitude': global_lon,
-                                         'latitude': global_lat})
-        global_da = global_da.assign_coords(coords={'Time': np.datetime64(at_ds.cycle_center)})
-
-        global_dam = global_da.where(ecco_latlon_grid.maskC.isel(Z=0) > 0)
-        nzp = np.where(~np.isnan(global_dam), 1, np.nan)
-        area_nzp = np.sum(nzp * ecco_latlon_grid.area)
-
-        spatial_mean = float(np.nansum(global_dam * ecco_latlon_grid.area) / area_nzp)
-        mean_da = xr.DataArray(spatial_mean, coords={'time': ct})
-        mean_da.name = 'spatial_mean'
-        spatial_mean_das.append(mean_da)
-
-        global_dam_removed_mean = global_dam - spatial_mean
-
-        # Make dataset with global_da and global_dam_removed_mean
-        global_dam.name = 'SSHA_GLOBAL'
-        global_ds = global_dam.to_dataset()
-        global_ds['SSHA_GLOBAL_removed_global_spatial_mean'] = global_dam_removed_mean
-        global_ds = global_ds.drop_vars('Z')
-
-        global_dss.append(global_ds)
-
-        cycle_type = 'along_track'
-        date = same_period_cycles[0]['filepath_s'][-18:-10]
-        date = f'{date[:4]}-{date[4:6]}-{date[6:8]}'
-        method = 2
-
-        print(f' - Calculating index values for {date}')
-
-        indicators_agg_da = None
-        offsets_agg_da = None
-
-        for pattern in patterns:
-
-            pattern_lats = pattern_ds[pattern]['Latitude']
-            pattern_lons = pattern_ds[pattern]['Longitude']
-            pattern_lons, pattern_lats = check_and_wrap(pattern_lons, pattern_lats)
-
-            agg_da = global_dam_removed_mean.sel(longitude=pattern_lons, latitude=pattern_lats)
-            agg_da.name = f'SSHA_{pattern}_removed_global_spatial_mean'
-            agg_da = agg_da.assign_coords(coords={'Time': np.datetime64(at_ds.cycle_center)})
-
-            agg_ds = agg_da.to_dataset()
-            agg_ds.attrs = at_ds.attrs
-
-            index_calc, ct,  ssha_anom = calc_at_climate_index(agg_ds,
-                                                               pattern,
-                                                               pattern_ds,
-                                                               ann_cyc_in_pattern,
-                                                               method=method)
-
-            anom_name = f'SSHA_{pattern}_removed_global_spatial_mean_and_seasonal_cycle'
-            ssha_anom.name = anom_name
-
-            agg_ds[anom_name] = ssha_anom
-            agg_ds = agg_ds.drop_vars(['Z', 'latitude', 'longitude'])
-
-            pattern_and_anom_das[pattern].append(agg_ds)
-
-            # create a DataArray Object with a single scalar value, the index
-            # for this pattern at this one time.
-            indicator_da = xr.DataArray(index_calc[1], coords={'time': ct})
-            indicator_da.name = f'{pattern}_index'
-            indicators_agg_das[pattern].append(indicator_da)
-
-            # create a DataArray Object with a single scalar value, the
-            # the offset of the climate indices (the constant term in the
-            # least squares fit, not really interesting but maybe good to have)
-            offsets_da = xr.DataArray(index_calc[0], coords={'time': ct})
-            offsets_da.name = f'{pattern}_offset'
-            offset_agg_das[pattern].append(offsets_da)
-
-    all_globals.append(xr.concat(global_dss, dim='Time'))
     # Concatenate the list of individual DAs along time
     # Merge into a single DataSet and append that pattern to all_indicators list
+    # List to hold DataSet objects for each pattern
+    all_indicators = []
+    all_patterns_and_anoms = []
+
+    print('Combining patterns...')
     for pattern in patterns:
-        indicators_agg_da = xr.concat(indicators_agg_das[pattern], 'time')
-
-        offsets_agg_da = xr.concat(offset_agg_das[pattern], 'time')
-
-        spatial_mean_da = xr.concat(spatial_mean_das, 'time')
+        print('...')
+        indicators_agg_da = indicators_agg_das[pattern]
+        offsets_agg_da = offset_agg_das[pattern]
 
         all_indicators.append(xr.merge([offsets_agg_da, indicators_agg_da, spatial_mean_da]))
 
-        pattern_and_anom_da = xr.concat(pattern_and_anom_das[pattern], 'Time')
-
-        all_patterns_and_anoms.append(pattern_and_anom_da)
+        all_patterns_and_anoms.append(pattern_and_anom_das[pattern])
 
     # FINISHED THROUGH ALL PATTERNS
     # append all the datasets together into a single dataset to rule them all
+    print('Merging indicators')
     new_indicators = xr.merge(all_indicators)
+    print('Merging patterns and anoms')
     new_patterns_and_anoms = xr.merge(all_patterns_and_anoms)
-    new_globals = xr.merge(all_globals)
+    print('Merging globals')
+    new_globals = global_ds
 
     # Open existing indicator ds to add new values if needed
     if update:
@@ -831,10 +835,10 @@ def indicators(config, output_path, reprocess=False):
     if update:
         indicator_meta['id'] = indicator_query[0]['id']
 
-    # Update Solr with dataset metadata
-    resp = solr_update(config, [indicator_meta])
+    # # Update Solr with dataset metadata
+    # resp = solr_update(config, [indicator_meta])
 
-    if resp.status_code == 200:
-        print('\nSuccessfully created or updated Solr index document')
-    else:
-        print('\nFailed to create or update Solr index document')
+    # if resp.status_code == 200:
+    #     print('\nSuccessfully created or updated Solr index document')
+    # else:
+    #     print('\nFailed to create or update Solr index document')
