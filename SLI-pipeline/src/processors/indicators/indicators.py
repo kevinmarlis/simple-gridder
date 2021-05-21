@@ -6,15 +6,17 @@ import sys
 import hashlib
 import logging
 import warnings
+import pickle
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 import numpy as np
+from numpy.lib.utils import source
 import pyresample as pr
 import requests
 import xarray as xr
 import xesmf as xe
-# from netCDF4 import default_fillvals
+from netCDF4 import default_fillvals
 from pyresample.utils import check_and_wrap
 from scipy.optimize import leastsq
 from pyresample.kd_tree import resample_gauss
@@ -100,7 +102,7 @@ def solr_update(config, update_body):
     return requests.post(url, json=update_body)
 
 
-def calc_grid_climate_index(agg_ds, pattern, pattern_ds, ann_cyc_in_pattern, weights_dir, method=2):
+def calc_grid_climate_index(agg_ds, pattern, pattern_ds, ann_cyc_in_pattern, ecco_latlon_grid, mapping_dir, method=3):
     """
 
     Params:
@@ -113,6 +115,11 @@ def calc_grid_climate_index(agg_ds, pattern, pattern_ds, ann_cyc_in_pattern, wei
         LS_result (List[float]):
         center_time (Datetime):
     """
+
+    generalized_functions_path = Path(
+        f'{Path(__file__).resolve().parents[4]}/SLI-utils/')
+    sys.path.append(str(generalized_functions_path))
+    import ecco_cloud_utils as ea  # pylint: disable=import-error
 
     # TODO: this could be problematic if the first case is not a np.datetime64 object
     # not sure if second case is needed (could be from an early cycle draft)
@@ -128,31 +135,117 @@ def calc_grid_climate_index(agg_ds, pattern, pattern_ds, ann_cyc_in_pattern, wei
 
     pattern_field = pattern_ds[pattern][f'{pattern}_pattern'].values
 
-    ds_in = agg_ds[f'SSHA_{pattern}_removed_global_linear_trend'].rename(
-        {'Longitude': 'lon', 'Latitude': 'lat'})
+    # Check if nearest_source_index has already been calculated for this pattern,
+    # open if it has, otherwise run it and save it.
 
-    ds_out = pattern_ds[pattern][f'{pattern}_pattern'].rename(
-        {'Longitude': 'lon', 'Latitude': 'lat'})
+    pattern_mapping_dir = mapping_dir / pattern
+    pattern_mapping_dir.mkdir(parents=True, exist_ok=True)
+    source_indices_fp = pattern_mapping_dir / f'{pattern}_source_indices.p'
+    num_sources_fp = pattern_mapping_dir / f'{pattern}_num_sources.p'
 
-    weight_fp = f'{weights_dir}/1812_to_{pattern}.nc'
-    if not os.path.exists(weight_fp):
-        print(f'Creating {pattern} weight file.')
+    agg_lons = agg_ds.Longitude.values
+    agg_lats = agg_ds.Latitude.values
 
-    # HiddenPrints class keeps xesmf.Regridder from printing details about weights
-    with HiddenPrints():
-        regridder = xe.Regridder(ds_in, ds_out, 'bilinear', filename=weight_fp, reuse_weights=True)
+    pattern_lons = pattern_ds[pattern].Longitude.values
+    pattern_lats = pattern_ds[pattern].Latitude.values
 
-    ssha_to_pattern_da = regridder(ds_in)
+    if not os.path.exists(source_indices_fp) or not os.path.exists(num_sources_fp):
+        temp_agg_lons, temp_agg_lats = check_and_wrap(agg_lons,
+                                                      agg_lats)
+        agg_lons_m, agg_lats_m = np.meshgrid(temp_agg_lons,
+                                             temp_agg_lats)
+        agg_swath_def = pr.geometry.SwathDefinition(lons=agg_lons_m,
+                                                    lats=agg_lats_m)
 
-    ssha_to_pattern_da = ssha_to_pattern_da.assign_coords(coords={'time': center_time})
+        temp_pattern_lons, temp_pattern_lats = check_and_wrap(pattern_lons,
+                                                              pattern_lats)
+        pattern_lons_m, pattern_lats_m = np.meshgrid(temp_pattern_lons,
+                                                     temp_pattern_lats)
+        pattern_swath_def = pr.geometry.SwathDefinition(lons=pattern_lons_m,
+                                                        lats=pattern_lats_m)
+
+        # TODO: ask Ian about how to calculate target_grid_radius for patterns
+        # instead of using ecco's grid area
+        pattern_grid_radius = np.sqrt(
+            ecco_latlon_grid.area.values.ravel())/2*np.sqrt(2)
+
+        # find_mappings_from_source_to_target(source_grid, target_grid, target_grid_radius, source_grid_min_L, source_grid_max_L, neighbours=100, less_output=True)
+        source_indices_within_target_radius_i, num_source_indices_within_target_radius_i, nearest_source_index_to_target_index_i = ea.find_mappings_from_source_to_target(agg_swath_def,
+                                                                                                                                                                          pattern_swath_def,
+                                                                                                                                                                          pattern_grid_radius,
+                                                                                                                                                                          2e4,
+                                                                                                                                                                          11e4,
+                                                                                                                                                                          neighbours=1)
+        with open(source_indices_fp, "wb") as f:
+            pickle.dump(source_indices_within_target_radius_i, f)
+        with open(num_sources_fp, "wb") as f:
+            pickle.dump(num_source_indices_within_target_radius_i, f)
+    else:
+        with open(source_indices_fp, "rb") as f:
+            source_indices_within_target_radius_i = pickle.load(f)
+        with open(num_sources_fp, "rb") as f:
+            num_source_indices_within_target_radius_i = pickle.load(f)
+
+    pattern_vals = agg_ds[f'SSHA_{pattern}_removed_global_linear_trend'].values
+    pattern_vals_1d = pattern_vals.ravel()
+    # new_vals_1d = np.ndarray(len(ecco_latlon_grid.area.values.ravel()),)
+    new_vals_1d = np.ndarray(len(pattern_field.ravel()),)
+
+    print(f'\tMapping source to {pattern} grid.')
+    for i in range(len(num_source_indices_within_target_radius_i)):
+
+        if num_source_indices_within_target_radius_i[i] != 0:
+            new_vals_1d[i] = sum(pattern_vals_1d[source_indices_within_target_radius_i[i]]
+                                 ) / num_source_indices_within_target_radius_i[i]
+
+    new_vals = new_vals_1d.reshape(
+        len(pattern_lats), len(pattern_lons))
+
+    ssha_to_pattern_da = xr.DataArray(new_vals, dims=['Latitude', 'Longitude'],
+                                      coords={'Latitude': pattern_lats,
+                                              'Longitude': pattern_lons, })
+
+    ssha_to_pattern_da = agg_ds[f'SSHA_{pattern}_removed_global_linear_trend']
+
+    ssha_to_pattern_da = ssha_to_pattern_da.assign_coords(
+        coords={'time': center_time})
+
+    # ds_in = agg_ds[f'SSHA_{pattern}_removed_global_linear_trend'].rename(
+    #     {'Longitude': 'lon', 'Latitude': 'lat'}).drop(['longitude', 'latitude', 'Z', 'degree', 'Time'])
+
+    # ds_out = pattern_ds[pattern][f'{pattern}_pattern'].rename(
+    #     {'Longitude': 'lon', 'Latitude': 'lat'})
+
+    # print(ds_in)
+    # print(ds_out)
+
+    # weights_dir = '/Users/kevinmarlis/Developer/JPL/sealevel_output/indicator/weights/'
+    # weight_fp = f'{weights_dir}/1812_to_{pattern}.nc'
+    # if not os.path.exists(weight_fp):
+    #     print(f'Creating {pattern} weight file.')
+
+    # # HiddenPrints class keeps xesmf.Regridder from printing details about weights
+    # with HiddenPrints():
+    #     regridder = xe.Regridder(
+    #         ds_in, ds_out, 'bilinear', filename=weight_fp, reuse_weights=True)
+
+    # ssha_to_pattern_da = regridder(ds_in)
+    # print('here')
+
+    # ssha_to_pattern_da = ssha_to_pattern_da.assign_coords(
+    #     coords={'time': center_time})
+    # ssha_to_pattern_da.to_netcdf('regridder_version.nc')
+    # exit()
 
     # remove the monthly mean pattern from the gridded ssha
     # now ssha_anom is w.r.t. seasonal cycle and MDT
     ssha_anom = ssha_to_pattern_da.values - \
-        ann_cyc_in_pattern[pattern].ann_pattern.sel(month=agg_ds_center_mon).values/1e3
+        ann_cyc_in_pattern[pattern].ann_pattern.sel(
+            month=agg_ds_center_mon).values/1e3
 
     # set ssha_anom to nan wherever the original pattern is nan
-    ssha_anom = np.where(~np.isnan(ds_out), ssha_anom, np.nan)
+    ssha_anom = np.where(
+        ~np.isnan(pattern_ds[pattern][f'{pattern}_pattern']), ssha_anom, np.nan)
 
     # extract out all non-nan values of ssha_anom, these are going to
     # be the points that we fit
@@ -212,7 +305,8 @@ def calc_grid_climate_index(agg_ds, pattern, pattern_ds, ann_cyc_in_pattern, wei
         index = B_hat[1]
 
         # now minimize ssha_to_fit
-        B_hat = np.matmul(np.matmul(np.linalg.inv(np.matmul(X.T, X)), X.T), ssha_to_fit.T)
+        B_hat = np.matmul(np.matmul(np.linalg.inv(
+            np.matmul(X.T, X)), X.T), ssha_to_fit.T)
         offset_b = B_hat[0]
         index_b = B_hat[1]
 
@@ -233,8 +327,8 @@ def calc_grid_climate_index(agg_ds, pattern, pattern_ds, ann_cyc_in_pattern, wei
 
     LS_result = [offset, index, offset_b, index_b]
 
-    lats = ssha_to_pattern_da.lat.values
-    lons = ssha_to_pattern_da.lon.values
+    lats = ssha_to_pattern_da.Latitude.values
+    lons = ssha_to_pattern_da.Longitude.values
 
     ssha_anom = xr.DataArray(ssha_anom, dims=['latitude', 'longitude'],
                              coords={'longitude': lons,
@@ -264,7 +358,8 @@ def calc_at_climate_index(agg_ds,
     pattern_field = pattern_ds[pattern][f'{pattern}_pattern']
 
     ssha_anom = agg_ds[f'SSHA_{pattern}_removed_global_linear_trend'] - \
-        ann_cyc_in_pattern[pattern].ann_pattern.sel(month=agg_ds_center_mon)/1e3
+        ann_cyc_in_pattern[pattern].ann_pattern.sel(
+            month=agg_ds_center_mon)/1e3
 
     # set ssha_anom to nan wherever the original pattern is nan
     # ssha_anom = np.where(~np.isnan(pattern_field), ssha_anom, np.nan)
@@ -377,7 +472,8 @@ def interp_ssha_points_to_pattern(pattern_area_def,
         tmp_ssha_lons, tmp_ssha_lats = check_and_wrap(ssha_lon_nn.ravel(),
                                                       ssha_lat_nn.ravel())
 
-        ssha_grid = pr.geometry.SwathDefinition(lons=tmp_ssha_lons, lats=tmp_ssha_lats)
+        ssha_grid = pr.geometry.SwathDefinition(
+            lons=tmp_ssha_lons, lats=tmp_ssha_lats)
 
         ssha_pts_to_pattern = resample_gauss(ssha_grid, ssha_nn,
                                              pattern_area_def,
@@ -396,15 +492,13 @@ def indicators(config, output_path, reprocess=False):
     """
     Here
     """
+    generalized_functions_path = Path(
+        f'{Path(__file__).resolve().parents[4]}/SLI-utils/')
+    sys.path.append(str(generalized_functions_path))
+    import ecco_cloud_utils as ea  # pylint: disable=import-error
 
-    indicator_filename = 'indicator.nc'
-    patterns_anoms_filename = 'patterns_and_ssha_anoms.nc'
-    global_filename = 'globals.nc'
     output_dir = output_path / 'indicator'
     output_dir.mkdir(parents=True, exist_ok=True)
-    indicator_output_path = output_dir / indicator_filename
-    patterns_and_anoms_output_path = output_dir / patterns_anoms_filename
-    global_output_path = output_dir / global_filename
 
     # Query for indicator doc on Solr
     fq = ['type_s:indicator']
@@ -425,7 +519,9 @@ def indicators(config, output_path, reprocess=False):
     # gridded cycles through 2016, along track from 2017 - 2019
     # fq = ['(type_s:cycle AND dataset_s:*rads* AND processing_success_b:true)']
     fq = ['(type_s:cycle AND dataset_s:*rads* AND processing_success_b:true) OR (type_s:cycle AND \
-    dataset_s:*1812* AND start_date_dt:[2005-01-01T00:00:00Z TO 2016-12-31T00:00:00Z] AND processing_success_b:true)']
+    dataset_s:*1812* AND start_date_dt:[2014-01-01T00:00:00Z TO 2017-01-01T00:00:00Z] AND processing_success_b:true)']
+
+    fq = ['type_s:cycle AND dataset_s:*1812* AND start_date_dt:[2014-01-01T00:00:00Z TO 2017-01-01T00:00:00Z] AND processing_success_b:true']
 
     updated_cycles = solr_query(config, fq, sort='start_date_dt asc')
 
@@ -455,8 +551,8 @@ def indicators(config, output_path, reprocess=False):
     bh_dir = Path().resolve() / 'Sea-Level-Indicators' / 'SLI-pipeline' / 'ref_grds'
 
     # weights dir is used to store remapping weights for xemsf regrid operation
-    weights_dir = output_dir / 'weights'
-    weights_dir.mkdir(parents=True, exist_ok=True)
+    mapping_dir = output_dir / 'mappings'
+    mapping_dir.mkdir(parents=True, exist_ok=True)
 
     # PREPARE THE PATTERNS
 
@@ -475,9 +571,11 @@ def indicators(config, output_path, reprocess=False):
 
         # get the geographic bounds of each sla pattern
         pattern_geo_bnds[pattern] = [float(pattern_ds[pattern].Latitude[0].values),
-                                     float(pattern_ds[pattern].Latitude[-1].values),
-                                     float(pattern_ds[pattern].Longitude[0].values),
-                                     float(pattern_ds[pattern].Longitude[-1].values)]
+                                     float(
+            pattern_ds[pattern].Latitude[-1].values),
+            float(
+            pattern_ds[pattern].Longitude[0].values),
+            float(pattern_ds[pattern].Longitude[-1].values)]
 
         # extract the sla annual cycle in the region of each pattern
         ann_cyc_in_pattern[pattern] = ann_ds.sel(Latitude=slice(pattern_geo_bnds[pattern][0],
@@ -489,7 +587,8 @@ def indicators(config, output_path, reprocess=False):
         lon_m, lat_m = np.meshgrid(pattern_ds[pattern].Longitude.values,
                                    pattern_ds[pattern].Latitude.values)
         tmp_lon, tmp_lat = check_and_wrap(lon_m, lat_m)
-        pattern_area_defs[pattern] = pr.geometry.SwathDefinition(lons=tmp_lon, lats=tmp_lat)
+        pattern_area_defs[pattern] = pr.geometry.SwathDefinition(
+            lons=tmp_lon, lats=tmp_lat)
 
     # Annual Cycle
     lon_m, lat_m = np.meshgrid(ann_ds.Longitude.values, ann_ds.Latitude.values)
@@ -504,19 +603,12 @@ def indicators(config, output_path, reprocess=False):
     global_lat = ecco_latlon_grid.latitude.values
     global_lon_m, global_lat_m = np.meshgrid(global_lon, global_lat)
 
-    pattern_area_defs['global'] = pr.geometry.SwathDefinition(lons=global_lon_m, lats=global_lat_m)
+    pattern_area_defs['global'] = pr.geometry.SwathDefinition(lons=global_lon_m,
+                                                              lats=global_lat_m)
 
     ############################
     # THE MAIN LOOP
     ############################
-
-    # key (pattern) : value (list of DAs with index at a single time)
-    # indicators_agg_das = defaultdict(list)
-    indicators_agg_das = {}
-    offset_agg_das = {}
-    pattern_and_anom_das = {}
-    spatial_mean_da = None
-    global_ds = None
 
     for key in updated_cycle_dict.keys():
         cycles_in_range = updated_cycle_dict[key]
@@ -525,13 +617,13 @@ def indicators(config, output_path, reprocess=False):
             cycle = cycles_in_range[0]
             cycle_ds = xr.open_dataset(cycle['filepath_s'])
         else:
-            flag = True
+            all_at_cycle = True
             for cycle_meta in cycles_in_range:
                 if '1812' in cycle_meta['dataset_s']:
                     cycle = cycle_meta
                     cycle_ds = xr.open_dataset(cycle['filepath_s'])
-                    flag = False
-            if flag:
+                    all_at_cycle = False
+            if all_at_cycle:
                 ats = []
                 for cycle_meta in cycles_in_range:
                     ds = xr.open_dataset(cycle_meta['filepath_s'])
@@ -561,35 +653,74 @@ def indicators(config, output_path, reprocess=False):
                                                                                                  cycle_ds.SSHA.Longitude.values.ravel(),
                                                                                                  cycle_ds.SSHA.Latitude.values.ravel(),
                                                                                                  roi=4e5, sigma=1e5, neighbours=5)
+        # Gridded cycles
         else:
-            ds_in = (cycle_ds['SSHA'].rename(
-                {'Longitude': 'lon', 'Latitude': 'lat'}).isel(Time=0)).T
-            ds_out = ecco_latlon_grid.rename({'latitude': 'lat', 'longitude': 'lon'})
+            global_mapping_dir = mapping_dir / 'global'
+            global_mapping_dir.mkdir(parents=True, exist_ok=True)
+            source_indices_fp = global_mapping_dir / 'half_deg_global_source_indices.p'
+            num_sources_fp = global_mapping_dir / 'half_deg_global_num_sources.p'
 
-            # Regridder has a habit of zeroing nans outside of min/max lats
-            ds_in_max_lat = np.max(ds_in.lat.values.ravel())
-            ds_in_min_lat = np.min(ds_in.lat.values.ravel())
+            if not os.path.exists(source_indices_fp) or not os.path.exists(num_sources_fp):
+                print('here')
+                # Create index mappings from 1812 cycle to ECCO grid
+                cycle_lons = cycle_ds.Longitude.values
+                cycle_lats = cycle_ds.Latitude.values
 
-            weight_fp = f'{weights_dir}/1812_to_global.nc'
-            if not os.path.exists(weight_fp):
-                print('Creating global weight file.')
+                temp_pattern_lons, temp_pattern_lats = check_and_wrap(cycle_lons,
+                                                                      cycle_lats)
 
-            # HiddenPrints class keeps xesmf.Regridder from printing details about weights
-            with HiddenPrints():
-                regridder = xe.Regridder(ds_in, ds_out, 'bilinear',
-                                         filename=weight_fp, reuse_weights=True)
+                cycle_lons_m, cycle_lats_m = np.meshgrid(temp_pattern_lons,
+                                                         temp_pattern_lats)
 
-            ssha_to_pattern_da = regridder(ds_in)
-            ssha_to_pattern_da = ssha_to_pattern_da.assign_coords(coords={'time': ct})
+                cycle_swath_def = pr.geometry.SwathDefinition(lons=cycle_lons_m,
+                                                              lats=cycle_lats_m)
 
-            ssha_to_pattern_da = ssha_to_pattern_da.where(ssha_to_pattern_da.lat < ds_in_max_lat)
-            ssha_to_pattern_da = ssha_to_pattern_da.where(ssha_to_pattern_da.lat > ds_in_min_lat)
+                ecco_grid_swath_def = pattern_area_defs['global']
 
-        global_da = xr.DataArray(ssha_to_pattern_da, dims=['latitude', 'longitude'],
+                ecco_grid_radius = np.sqrt(
+                    ecco_latlon_grid.area.values.ravel())/2*np.sqrt(2)
+
+                source_indices_within_target_radius_i, num_source_indices_within_target_radius_i, nearest_source_index_to_target_i = ea.find_mappings_from_source_to_target(cycle_swath_def,
+                                                                                                                                                                            ecco_grid_swath_def,
+                                                                                                                                                                            ecco_grid_radius,
+                                                                                                                                                                            3e3,
+                                                                                                                                                                            20e3)
+                with open(source_indices_fp, "wb") as f:
+                    pickle.dump(source_indices_within_target_radius_i, f)
+                with open(num_sources_fp, "wb") as f:
+                    pickle.dump(num_source_indices_within_target_radius_i, f)
+
+            else:
+                # Load up the existing index mappings
+                with open(source_indices_fp, "rb") as f:
+                    source_indices_within_target_radius_i = pickle.load(f)
+
+                with open(num_sources_fp, "rb") as f:
+                    num_source_indices_within_target_radius_i = pickle.load(f)
+
+            cycle_vals = cycle_ds.sel(
+                Time=cycle_ds.Time.values[0]).SSHA.values.T
+            cycle_vals_1d = cycle_vals.ravel()
+            new_vals_1d = np.ndarray(len(ecco_latlon_grid.area.values.ravel()),)
+
+            print('\tMapping source to target grid.')
+            for i in range(len(num_source_indices_within_target_radius_i)):
+                if num_source_indices_within_target_radius_i[i] != 0:
+
+                    new_vals_1d[i] = sum(cycle_vals_1d[source_indices_within_target_radius_i[i]]
+                                         ) / num_source_indices_within_target_radius_i[i]
+                else:
+                    new_vals_1d[i] = np.nan
+
+            # The regridded data
+            new_vals = new_vals_1d.reshape(len(global_lat), len(global_lon))
+
+        global_da = xr.DataArray(new_vals, dims=['latitude', 'longitude'],
                                  coords={'longitude': global_lon,
                                          'latitude': global_lat})
 
-        global_da = global_da.assign_coords(coords={'Time': np.datetime64(cycle_ds.cycle_center)})
+        global_da = global_da.assign_coords(
+            coords={'Time': np.datetime64(cycle_ds.cycle_center)})
 
         global_dam = global_da.where(ecco_latlon_grid.maskC.isel(Z=0) > 0)
         global_dam.name = 'SSHA_GLOBAL'
@@ -600,25 +731,19 @@ def indicators(config, output_path, reprocess=False):
         # Spatial Mean
         nzp = np.where(~np.isnan(global_dam), 1, np.nan)
         area_nzp = np.sum(nzp * ecco_latlon_grid.area)
-        spatial_mean = float(np.nansum(global_dam * ecco_latlon_grid.area) / area_nzp)
+        spatial_mean = float(
+            np.nansum(global_dam * ecco_latlon_grid.area) / area_nzp)
         mean_da = xr.DataArray(spatial_mean, coords={'time': ct})
         mean_da.name = 'spatial_mean'
         mean_da.attrs = {'comment': 'Global SSHA spatial mean'}
 
-        if spatial_mean_da is not None:
-            spatial_mean_da = xr.concat([spatial_mean_da, mean_da], 'time')
-        else:
-            spatial_mean_da = mean_da
-
         global_dam_removed_mean = global_dam - spatial_mean
-        global_dam_removed_mean.attrs = {'comment': 'Global SSHA with global spatial mean removed'}
+        global_dam_removed_mean.attrs = {
+            'comment': 'Global SSHA with global spatial mean removed'}
         global_dsm['SSHA_GLOBAL_removed_global_spatial_mean'] = global_dam_removed_mean
 
         # Linear Trend
         trend_ds = xr.open_dataset(bh_dir / 'pointwise_sealevel_trend.nc')
-        # time_diff = (global_da.Time.values - np.datetime64('1992-10-02')
-        #              ).astype(np.int32)/3.1536e+16
-        # trend = (time_diff * trend_ds['pointwise_sealevel_trend']*1000) + trend_ds['pointwise_sealevel_offset']
 
         time_diff = (global_da.Time.values - np.datetime64('1992-10-02')
                      ).astype(np.int32)/1e9
@@ -627,23 +752,24 @@ def indicators(config, output_path, reprocess=False):
             trend_ds['pointwise_sealevel_offset']
 
         global_dam_detrended = global_dam - trend
-        global_dam_detrended.attrs = {'comment': 'Global SSHA with linear trend removed'}
+        global_dam_detrended.attrs = {
+            'comment': 'Global SSHA with linear trend removed'}
         global_dsm['SSHA_GLOBAL_removed_linear_trend'] = global_dam_detrended
 
         global_dsm = global_dsm.drop_vars('Z')
-
-        if global_ds is not None:
-            global_ds = xr.concat([global_ds, global_dsm], dim='Time')
-        else:
-            global_ds = global_dsm
-        global_dsm.close()
+        global_dsm = global_dsm.drop(['degree'])
 
         method = 3
+
+        indicators_agg_das = {}
+        offset_agg_das = {}
+        pattern_and_anom_das = {}
 
         for pattern in patterns:
             pattern_lats = pattern_ds[pattern]['Latitude']
             pattern_lons = pattern_ds[pattern]['Longitude']
-            pattern_lons, pattern_lats = check_and_wrap(pattern_lons, pattern_lats)
+            pattern_lons, pattern_lats = check_and_wrap(pattern_lons,
+                                                        pattern_lats)
 
             # Calculate pattern mean sea level
             # pattern_area_dam = global_dam.sel(longitude=pattern_lons, latitude=pattern_lats)
@@ -655,9 +781,16 @@ def indicators(config, output_path, reprocess=False):
             # pattern_area_spatial_mean = float(
             #     np.nansum(pattern_area_dam * pattern_ecco_latlon_grid.area) / pattern_area_nzp)
 
-            agg_da = global_dam_detrended.sel(longitude=pattern_lons, latitude=pattern_lats)
+            agg_da = global_dam_detrended.sel(
+                longitude=pattern_lons, latitude=pattern_lats)
             agg_da.name = f'SSHA_{pattern}_removed_global_linear_trend'
-            agg_da = agg_da.assign_coords(coords={'Time': np.datetime64(cycle_ds.cycle_center)})
+            agg_da = agg_da.assign_coords(
+                coords={'Time': np.datetime64(cycle_ds.cycle_center)})
+            try:
+                agg_da = agg_da.drop(['degree'])
+            except:
+                pass
+
             agg_ds = agg_da.to_dataset()
             agg_ds.attrs = cycle_ds.attrs
 
@@ -667,9 +800,10 @@ def indicators(config, output_path, reprocess=False):
                                                                    method=method)
             else:
                 index_calc, ct, ssha_anom = calc_grid_climate_index(agg_ds, pattern, pattern_ds,
-                                                                    ann_cyc_in_pattern, weights_dir,
-                                                                    method=method)
-                ssha_anom = ssha_anom.rename({'latitude': 'Latitude', 'longitude': 'Longitude'})
+                                                                    ann_cyc_in_pattern, ecco_latlon_grid,
+                                                                    mapping_dir, method=method)
+                ssha_anom = ssha_anom.rename(
+                    {'latitude': 'Latitude', 'longitude': 'Longitude'})
 
             anom_name = f'SSHA_{pattern}_removed_global_linear_trend_and_seasonal_cycle'
             ssha_anom.name = anom_name
@@ -681,133 +815,196 @@ def indicators(config, output_path, reprocess=False):
                 agg_ds = agg_ds.drop_dims(['latitude', 'longitude'])
             except Exception:
                 pass
+            pattern_and_anom_das[pattern] = agg_ds
 
-            if pattern in pattern_and_anom_das.keys():
-                pattern_and_anom_das[pattern] = xr.concat(
-                    [pattern_and_anom_das[pattern], agg_ds], 'Time')
-            else:
-                pattern_and_anom_das[pattern] = agg_ds
-            agg_ds.close()
-
-            # create a DataArray Object with a single scalar value, the index
-            # for this pattern at this one time.
             indicator_da = xr.DataArray(index_calc[1], coords={'time': ct})
             indicator_da.name = f'{pattern}_index'
-            if pattern in indicators_agg_das.keys():
-                indicators_agg_das[pattern] = xr.concat(
-                    [indicators_agg_das[pattern], indicator_da], 'time')
-            else:
-                indicators_agg_das[pattern] = indicator_da
-            indicator_da.close()
+            indicators_agg_das[pattern] = indicator_da
 
-            # create a DataArray Object with a single scalar value, the
-            # the offset of the climate indices (the constant term in the
-            # least squares fit, not really interesting but maybe good to have)
             offsets_da = xr.DataArray(index_calc[0], coords={'time': ct})
             offsets_da.name = f'{pattern}_offset'
-            if pattern in offset_agg_das.keys():
-                offset_agg_das[pattern] = xr.concat([offset_agg_das[pattern], offsets_da], 'time')
-            else:
-                offset_agg_das[pattern] = offsets_da
-            offsets_da.close()
+            offset_agg_das[pattern] = offsets_da
 
-            cycle_ds.close()
+        # Concatenate the list of individual DAs along time
+        # Merge into a single DataSet and append that pattern to all_indicators list
+        # List to hold DataSet objects for each pattern
+        all_indicators = []
+        all_patterns_and_anoms = []
 
-    # Concatenate the list of individual DAs along time
-    # Merge into a single DataSet and append that pattern to all_indicators list
-    # List to hold DataSet objects for each pattern
-    all_indicators = []
-    all_patterns_and_anoms = []
+        for pattern in patterns:
+            indicators_agg_da = indicators_agg_das[pattern]
+            offsets_agg_da = offset_agg_das[pattern]
 
-    print('Combining patterns...')
-    for pattern in patterns:
-        print('...')
-        indicators_agg_da = indicators_agg_das[pattern]
-        offsets_agg_da = offset_agg_das[pattern]
+            all_indicators.append(
+                xr.merge([offsets_agg_da, indicators_agg_da, mean_da]))
 
-        all_indicators.append(xr.merge([offsets_agg_da, indicators_agg_da, spatial_mean_da]))
+            all_patterns_and_anoms.append(pattern_and_anom_das[pattern])
 
-        all_patterns_and_anoms.append(pattern_and_anom_das[pattern])
+        # FINISHED THROUGH ALL PATTERNS
+        # append all the datasets together into a single dataset to rule them all
+        indicator_ds = xr.merge(all_indicators)
+        indicator_ds = indicator_ds.expand_dims(Time=[indicator_ds.time.values])
+        indicator_ds = indicator_ds.drop(['time'])
+        pattern_anoms_ds = xr.merge(all_patterns_and_anoms)
+        globals_ds = global_dsm
 
-    # FINISHED THROUGH ALL PATTERNS
-    # append all the datasets together into a single dataset to rule them all
-    print('Merging indicators')
-    new_indicators = xr.merge(all_indicators)
-    print('Merging patterns and anoms')
-    new_patterns_and_anoms = xr.merge(all_patterns_and_anoms)
-    print('Merging globals')
-    new_globals = global_ds
+        fp_date = date.replace('-', '_')
+        # date =
 
-    # Open existing indicator ds to add new values if needed
-    if update:
-        print('\nAdding calculated values to indicator netCDF.')
+        indicator_filename = f'{fp_date}_indicator.nc'
+        pattern_anoms_filename = f'{fp_date}_pattern_ssha_anoms.nc'
+        global_filename = f'{fp_date}_globals.nc'
 
-        # PROCESS INDICATORS
-        indicator_ds = xr.open_dataset(indicator_metadata['indicator_filepath_s'])
+        cycle_indicators_path = output_dir / 'cycle_indicators'
+        cycle_indicators_path.mkdir(parents=True, exist_ok=True)
+        indicator_output_path = cycle_indicators_path / indicator_filename
 
-        # Remove times of new indicator values from original indicator DS if they exist
-        # (this effectively updates the values)
-        indicator_ds = indicator_ds.where(~indicator_ds['time'].isin(
-            np.unique(new_indicators['time'])), drop=True)
+        cycle_pattern_anoms_path = output_dir / 'cycle_pattern_anoms'
+        cycle_pattern_anoms_path.mkdir(parents=True, exist_ok=True)
+        pattern_anoms_output_path = cycle_pattern_anoms_path / pattern_anoms_filename
 
-        # And use xr.concat to add in the new values (concat will create multiple entries for the
-        # same time value).
-        indicator_ds = xr.concat([indicator_ds, new_indicators], 'time')
+        cycle_globals_path = output_dir / 'cycle_globals'
+        cycle_globals_path.mkdir(parents=True, exist_ok=True)
+        global_output_path = cycle_globals_path / global_filename
 
-        # Finally, sort to get things in the right order
-        indicator_ds = indicator_ds.sortby('time')
+        all_ds = [(indicator_ds, indicator_output_path),
+                  (pattern_anoms_ds, pattern_anoms_output_path),
+                  (globals_ds, global_output_path)]
 
-        # Reapeat for other files
+        # # NetCDF encoding
+        encoding_each = {'zlib': True,
+                         'complevel': 5,
+                         'dtype': 'float32',
+                         'shuffle': True,
+                         '_FillValue': default_fillvals['f8']}
 
-        # PROCESS PATTERNS AND ANOMS
-        patterns_and_anoms_ds = xr.open_dataset(indicator_metadata['patterns_anoms_filepath_s'])
-        # Load is required for sorting
-        patterns_and_anoms_ds.load()
-        patterns_and_anoms_ds = patterns_and_anoms_ds.where(~patterns_and_anoms_ds['Time'].isin(
-            np.unique(new_patterns_and_anoms['Time'])), drop=True)
-        patterns_and_anoms_ds = xr.concat([patterns_and_anoms_ds, new_patterns_and_anoms], 'Time')
-        patterns_and_anoms_ds = patterns_and_anoms_ds.sortby('Time')
+        for ds, output_path in all_ds:
 
-        # PROCESS GLOBALS
-        globals_ds = xr.open_dataset(indicator_metadata['globals_filepath_s'])
-        # Load is required for sorting
-        globals_ds.load()
-        globals_ds = globals_ds.where(~globals_ds['Time'].isin(
-            np.unique(new_globals['Time'])), drop=True)
-        globals_ds = xr.concat([globals_ds, new_globals], 'Time')
-        globals_ds = globals_ds.sortby('Time')
+            coord_encoding = {}
+            for coord in ds.coords:
+                coord_encoding[coord] = {'_FillValue': None,
+                                         'dtype': 'float32',
+                                         'complevel': 6}
 
-    else:
-        indicator_ds = new_indicators
-        patterns_and_anoms_ds = new_patterns_and_anoms
-        globals_ds = new_globals
+                # if 'Time' in coord:
+                #     coord_encoding[coord] = {'_FillValue': None,
+                #                              'zlib': True,
+                #                              'contiguous': False,
+                #                              'shuffle': False}
 
-    # # NetCDF encoding
-    # encoding_each = {'zlib': True,
-    #                  'complevel': 5,
-    #                  'dtype': 'float32',
-    #                  'shuffle': True,
-    #                  '_FillValue': default_fillvals['f8']}
+            var_encoding = {
+                var: encoding_each for var in ds.data_vars}
 
-    # coord_encoding = {}
-    # for coord in indicator_ds.coords:
-    #     coord_encoding[coord] = {'_FillValue': None,
-    #                              'dtype': 'float32',
-    #                              'complevel': 6}
+            encoding = {**coord_encoding, **var_encoding}
 
-    #     if 'Time' in coord:
-    #         coord_encoding[coord] = {'_FillValue': None,
-    #                                  'zlib': True,
-    #                                  'contiguous': False,
-    #                                  'shuffle': False}
+            ds.to_netcdf(output_path, encoding=encoding)
+            ds.close()
 
-    # var_encoding = {var: encoding_each for var in indicator_ds.data_vars}
+    cycle_indicators_path = output_dir / 'cycle_indicators'
+    indicator_ds = xr.open_mfdataset(f'{cycle_indicators_path}/*.nc')
+    indicator_ds.to_netcdf(output_dir / 'complete_indicator_ds.nc')
+    print(indicator_ds)
+    exit()
 
-    # encoding = {**coord_encoding, **var_encoding}
+    # # Concatenate the list of individual DAs along time
+    # # Merge into a single DataSet and append that pattern to all_indicators list
+    # # List to hold DataSet objects for each pattern
+    # all_indicators = []
+    # all_patterns_and_anoms = []
 
-    indicator_ds.to_netcdf(indicator_output_path)
-    patterns_and_anoms_ds.to_netcdf(patterns_and_anoms_output_path)
-    globals_ds.to_netcdf(global_output_path)
+    # print('Combining patterns...')
+    # for pattern in patterns:
+    #     print('...')
+    #     indicators_agg_da = indicators_agg_das[pattern]
+    #     offsets_agg_da = offset_agg_das[pattern]
+
+    #     all_indicators.append(
+    #         xr.merge([offsets_agg_da, indicators_agg_da, spatial_mean_da]))
+
+    #     all_patterns_and_anoms.append(pattern_and_anom_das[pattern])
+
+    # # FINISHED THROUGH ALL PATTERNS
+    # # append all the datasets together into a single dataset to rule them all
+    # print('Merging indicators')
+    # new_indicators = xr.merge(all_indicators)
+    # print('Merging patterns and anoms')
+    # new_patterns_and_anoms = xr.merge(all_patterns_and_anoms)
+    # print('Merging globals')
+    # new_globals = global_ds
+
+    # # Open existing indicator ds to add new values if needed
+    # if update:
+    #     print('\nAdding calculated values to indicator netCDF.')
+
+    #     # PROCESS INDICATORS
+    #     indicator_ds = xr.open_dataset(
+    #         indicator_metadata['indicator_filepath_s'])
+
+    #     # Remove times of new indicator values from original indicator DS if they exist
+    #     # (this effectively updates the values)
+    #     indicator_ds = indicator_ds.where(~indicator_ds['time'].isin(
+    #         np.unique(new_indicators['time'])), drop=True)
+
+    #     # And use xr.concat to add in the new values (concat will create multiple entries for the
+    #     # same time value).
+    #     indicator_ds = xr.concat([indicator_ds, new_indicators], 'time')
+
+    #     # Finally, sort to get things in the right order
+    #     indicator_ds = indicator_ds.sortby('time')
+
+    #     # Reapeat for other files
+
+    #     # PROCESS PATTERNS AND ANOMS
+    #     patterns_and_anoms_ds = xr.open_dataset(
+    #         indicator_metadata['patterns_anoms_filepath_s'])
+    #     # Load is required for sorting
+    #     patterns_and_anoms_ds.load()
+    #     patterns_and_anoms_ds = patterns_and_anoms_ds.where(~patterns_and_anoms_ds['Time'].isin(
+    #         np.unique(new_patterns_and_anoms['Time'])), drop=True)
+    #     patterns_and_anoms_ds = xr.concat(
+    #         [patterns_and_anoms_ds, new_patterns_and_anoms], 'Time')
+    #     patterns_and_anoms_ds = patterns_and_anoms_ds.sortby('Time')
+
+    #     # PROCESS GLOBALS
+    #     globals_ds = xr.open_dataset(indicator_metadata['globals_filepath_s'])
+    #     # Load is required for sorting
+    #     globals_ds.load()
+    #     globals_ds = globals_ds.where(~globals_ds['Time'].isin(
+    #         np.unique(new_globals['Time'])), drop=True)
+    #     globals_ds = xr.concat([globals_ds, new_globals], 'Time')
+    #     globals_ds = globals_ds.sortby('Time')
+
+    # else:
+    #     indicator_ds = new_indicators
+    #     patterns_and_anoms_ds = new_patterns_and_anoms
+    #     globals_ds = new_globals
+
+    # # # NetCDF encoding
+    # # encoding_each = {'zlib': True,
+    # #                  'complevel': 5,
+    # #                  'dtype': 'float32',
+    # #                  'shuffle': True,
+    # #                  '_FillValue': default_fillvals['f8']}
+
+    # # coord_encoding = {}
+    # # for coord in indicator_ds.coords:
+    # #     coord_encoding[coord] = {'_FillValue': None,
+    # #                              'dtype': 'float32',
+    # #                              'complevel': 6}
+
+    # #     if 'Time' in coord:
+    # #         coord_encoding[coord] = {'_FillValue': None,
+    # #                                  'zlib': True,
+    # #                                  'contiguous': False,
+    # #                                  'shuffle': False}
+
+    # # var_encoding = {var: encoding_each for var in indicator_ds.data_vars}
+
+    # # encoding = {**coord_encoding, **var_encoding}
+
+    # indicator_ds.to_netcdf(indicator_output_path)
+    # patterns_and_anoms_ds.to_netcdf(patterns_and_anoms_output_path)
+    # globals_ds.to_netcdf(global_output_path)
 
     # ==============================================
     # Create or update indicator on Solr
