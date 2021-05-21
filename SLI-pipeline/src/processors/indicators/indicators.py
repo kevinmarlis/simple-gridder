@@ -610,427 +610,338 @@ def indicators(config, output_path, reprocess=False):
     # THE MAIN LOOP
     ############################
 
-    for key in updated_cycle_dict.keys():
-        cycles_in_range = updated_cycle_dict[key]
+    # for key in updated_cycle_dict.keys():
+    #     cycles_in_range = updated_cycle_dict[key]
 
-        if len(cycles_in_range) == 1:
-            cycle = cycles_in_range[0]
-            cycle_ds = xr.open_dataset(cycle['filepath_s'])
-        else:
-            all_at_cycle = True
-            for cycle_meta in cycles_in_range:
-                if '1812' in cycle_meta['dataset_s']:
-                    cycle = cycle_meta
-                    cycle_ds = xr.open_dataset(cycle['filepath_s'])
-                    all_at_cycle = False
-            if all_at_cycle:
-                ats = []
-                for cycle_meta in cycles_in_range:
-                    ds = xr.open_dataset(cycle_meta['filepath_s'])
-                    ats.append(ds)
+    #     if len(cycles_in_range) == 1:
+    #         cycle = cycles_in_range[0]
+    #         cycle_ds = xr.open_dataset(cycle['filepath_s'])
+    #     else:
+    #         all_at_cycle = True
+    #         for cycle_meta in cycles_in_range:
+    #             if '1812' in cycle_meta['dataset_s']:
+    #                 cycle = cycle_meta
+    #                 cycle_ds = xr.open_dataset(cycle['filepath_s'])
+    #                 all_at_cycle = False
+    #         if all_at_cycle:
+    #             ats = []
+    #             for cycle_meta in cycles_in_range:
+    #                 ds = xr.open_dataset(cycle_meta['filepath_s'])
+    #                 ats.append(ds)
 
-                cycle_ds = xr.concat(ats, 'Time')
-                cycle_ds = cycle_ds.sortby('Time')
-                cycle = cycle_meta
+    #             cycle_ds = xr.concat(ats, 'Time')
+    #             cycle_ds = cycle_ds.sortby('Time')
+    #             cycle = cycle_meta
 
-        cycle_ds.close()
-        cycle_type = cycle['index_type_s']
-        date = cycle['filepath_s'][-18:-10]
-        date = f'{date[:4]}-{date[4:6]}-{date[6:8]}'
+    #     cycle_ds.close()
+    #     cycle_type = cycle['index_type_s']
+    #     date = cycle['filepath_s'][-18:-10]
+    #     date = f'{date[:4]}-{date[4:6]}-{date[6:8]}'
 
-        print(f' - Calculating index values for {date}')
+    #     print(f' - Calculating index values for {date}')
 
-        if 'cycle_center' in cycle_ds.attrs:
-            ct = np.datetime64(cycle_ds.cycle_center)
+    #     if 'cycle_center' in cycle_ds.attrs:
+    #         ct = np.datetime64(cycle_ds.cycle_center)
 
-        elif 'time_center' in cycle_ds.attrs:
-            ct = np.datetime64(cycle_ds.time_center)
+    #     elif 'time_center' in cycle_ds.attrs:
+    #         ct = np.datetime64(cycle_ds.time_center)
 
-        if cycle_type == 'along_track':
-            # Use roi=2e5, sigma=1e5, neighbours=1000 for final version
-            ssha_lon_nn, ssha_lat_nn, sha_nn, ssha_to_pattern_da = interp_ssha_points_to_pattern(pattern_area_defs['global'],
-                                                                                                 cycle_ds.SSHA.values.ravel(),
-                                                                                                 cycle_ds.SSHA.Longitude.values.ravel(),
-                                                                                                 cycle_ds.SSHA.Latitude.values.ravel(),
-                                                                                                 roi=4e5, sigma=1e5, neighbours=5)
-        # Gridded cycles
-        else:
-            global_mapping_dir = mapping_dir / 'global'
-            global_mapping_dir.mkdir(parents=True, exist_ok=True)
-            source_indices_fp = global_mapping_dir / 'half_deg_global_source_indices.p'
-            num_sources_fp = global_mapping_dir / 'half_deg_global_num_sources.p'
+    #     if cycle_type == 'along_track':
+    #         # Use roi=2e5, sigma=1e5, neighbours=1000 for final version
+    #         ssha_lon_nn, ssha_lat_nn, sha_nn, ssha_to_pattern_da = interp_ssha_points_to_pattern(pattern_area_defs['global'],
+    #                                                                                              cycle_ds.SSHA.values.ravel(),
+    #                                                                                              cycle_ds.SSHA.Longitude.values.ravel(),
+    #                                                                                              cycle_ds.SSHA.Latitude.values.ravel(),
+    #                                                                                              roi=4e5, sigma=1e5, neighbours=5)
+    #     # Gridded cycles
+    #     else:
+    #         global_mapping_dir = mapping_dir / 'global'
+    #         global_mapping_dir.mkdir(parents=True, exist_ok=True)
+    #         source_indices_fp = global_mapping_dir / 'half_deg_global_source_indices.p'
+    #         num_sources_fp = global_mapping_dir / 'half_deg_global_num_sources.p'
 
-            if not os.path.exists(source_indices_fp) or not os.path.exists(num_sources_fp):
-                print('here')
-                # Create index mappings from 1812 cycle to ECCO grid
-                cycle_lons = cycle_ds.Longitude.values
-                cycle_lats = cycle_ds.Latitude.values
+    #         if not os.path.exists(source_indices_fp) or not os.path.exists(num_sources_fp):
+    #             print('here')
+    #             # Create index mappings from 1812 cycle to ECCO grid
+    #             cycle_lons = cycle_ds.Longitude.values
+    #             cycle_lats = cycle_ds.Latitude.values
 
-                temp_pattern_lons, temp_pattern_lats = check_and_wrap(cycle_lons,
-                                                                      cycle_lats)
+    #             temp_pattern_lons, temp_pattern_lats = check_and_wrap(cycle_lons,
+    #                                                                   cycle_lats)
 
-                cycle_lons_m, cycle_lats_m = np.meshgrid(temp_pattern_lons,
-                                                         temp_pattern_lats)
+    #             cycle_lons_m, cycle_lats_m = np.meshgrid(temp_pattern_lons,
+    #                                                      temp_pattern_lats)
 
-                cycle_swath_def = pr.geometry.SwathDefinition(lons=cycle_lons_m,
-                                                              lats=cycle_lats_m)
+    #             cycle_swath_def = pr.geometry.SwathDefinition(lons=cycle_lons_m,
+    #                                                           lats=cycle_lats_m)
 
-                ecco_grid_swath_def = pattern_area_defs['global']
+    #             ecco_grid_swath_def = pattern_area_defs['global']
 
-                ecco_grid_radius = np.sqrt(
-                    ecco_latlon_grid.area.values.ravel())/2*np.sqrt(2)
+    #             ecco_grid_radius = np.sqrt(
+    #                 ecco_latlon_grid.area.values.ravel())/2*np.sqrt(2)
 
-                source_indices_within_target_radius_i, num_source_indices_within_target_radius_i, nearest_source_index_to_target_i = ea.find_mappings_from_source_to_target(cycle_swath_def,
-                                                                                                                                                                            ecco_grid_swath_def,
-                                                                                                                                                                            ecco_grid_radius,
-                                                                                                                                                                            3e3,
-                                                                                                                                                                            20e3)
-                with open(source_indices_fp, "wb") as f:
-                    pickle.dump(source_indices_within_target_radius_i, f)
-                with open(num_sources_fp, "wb") as f:
-                    pickle.dump(num_source_indices_within_target_radius_i, f)
+    #             source_indices_within_target_radius_i, num_source_indices_within_target_radius_i, nearest_source_index_to_target_i = ea.find_mappings_from_source_to_target(cycle_swath_def,
+    #                                                                                                                                                                         ecco_grid_swath_def,
+    #                                                                                                                                                                         ecco_grid_radius,
+    #                                                                                                                                                                         3e3,
+    #                                                                                                                                                                         20e3)
+    #             with open(source_indices_fp, "wb") as f:
+    #                 pickle.dump(source_indices_within_target_radius_i, f)
+    #             with open(num_sources_fp, "wb") as f:
+    #                 pickle.dump(num_source_indices_within_target_radius_i, f)
 
-            else:
-                # Load up the existing index mappings
-                with open(source_indices_fp, "rb") as f:
-                    source_indices_within_target_radius_i = pickle.load(f)
+    #         else:
+    #             # Load up the existing index mappings
+    #             with open(source_indices_fp, "rb") as f:
+    #                 source_indices_within_target_radius_i = pickle.load(f)
 
-                with open(num_sources_fp, "rb") as f:
-                    num_source_indices_within_target_radius_i = pickle.load(f)
+    #             with open(num_sources_fp, "rb") as f:
+    #                 num_source_indices_within_target_radius_i = pickle.load(f)
 
-            cycle_vals = cycle_ds.sel(
-                Time=cycle_ds.Time.values[0]).SSHA.values.T
-            cycle_vals_1d = cycle_vals.ravel()
-            new_vals_1d = np.ndarray(len(ecco_latlon_grid.area.values.ravel()),)
+    #         cycle_vals = cycle_ds.sel(
+    #             Time=cycle_ds.Time.values[0]).SSHA.values.T
+    #         cycle_vals_1d = cycle_vals.ravel()
+    #         new_vals_1d = np.ndarray(len(ecco_latlon_grid.area.values.ravel()),)
 
-            print('\tMapping source to target grid.')
-            for i in range(len(num_source_indices_within_target_radius_i)):
-                if num_source_indices_within_target_radius_i[i] != 0:
+    #         print('\tMapping source to target grid.')
+    #         for i in range(len(num_source_indices_within_target_radius_i)):
+    #             if num_source_indices_within_target_radius_i[i] != 0:
 
-                    new_vals_1d[i] = sum(cycle_vals_1d[source_indices_within_target_radius_i[i]]
-                                         ) / num_source_indices_within_target_radius_i[i]
-                else:
-                    new_vals_1d[i] = np.nan
+    #                 new_vals_1d[i] = sum(cycle_vals_1d[source_indices_within_target_radius_i[i]]
+    #                                      ) / num_source_indices_within_target_radius_i[i]
+    #             else:
+    #                 new_vals_1d[i] = np.nan
 
-            # The regridded data
-            new_vals = new_vals_1d.reshape(len(global_lat), len(global_lon))
+    #         # The regridded data
+    #         new_vals = new_vals_1d.reshape(len(global_lat), len(global_lon))
 
-        global_da = xr.DataArray(new_vals, dims=['latitude', 'longitude'],
-                                 coords={'longitude': global_lon,
-                                         'latitude': global_lat})
+    #     global_da = xr.DataArray(new_vals, dims=['latitude', 'longitude'],
+    #                              coords={'longitude': global_lon,
+    #                                      'latitude': global_lat})
 
-        global_da = global_da.assign_coords(
-            coords={'Time': np.datetime64(cycle_ds.cycle_center)})
+    #     global_da = global_da.assign_coords(
+    #         coords={'Time': np.datetime64(cycle_ds.cycle_center)})
 
-        global_dam = global_da.where(ecco_latlon_grid.maskC.isel(Z=0) > 0)
-        global_dam.name = 'SSHA_GLOBAL'
-        global_dam.attrs = {
-            'comment': 'Global SSHA land masked using ECCO lat/lon grid'}
-        global_dsm = global_dam.to_dataset()
+    #     global_dam = global_da.where(ecco_latlon_grid.maskC.isel(Z=0) > 0)
+    #     global_dam.name = 'SSHA_GLOBAL'
+    #     global_dam.attrs = {
+    #         'comment': 'Global SSHA land masked using ECCO lat/lon grid'}
+    #     global_dsm = global_dam.to_dataset()
 
-        # Spatial Mean
-        nzp = np.where(~np.isnan(global_dam), 1, np.nan)
-        area_nzp = np.sum(nzp * ecco_latlon_grid.area)
-        spatial_mean = float(
-            np.nansum(global_dam * ecco_latlon_grid.area) / area_nzp)
-        mean_da = xr.DataArray(spatial_mean, coords={'time': ct})
-        mean_da.name = 'spatial_mean'
-        mean_da.attrs = {'comment': 'Global SSHA spatial mean'}
+    #     # Spatial Mean
+    #     nzp = np.where(~np.isnan(global_dam), 1, np.nan)
+    #     area_nzp = np.sum(nzp * ecco_latlon_grid.area)
+    #     spatial_mean = float(
+    #         np.nansum(global_dam * ecco_latlon_grid.area) / area_nzp)
+    #     mean_da = xr.DataArray(spatial_mean, coords={'time': ct})
+    #     mean_da.name = 'spatial_mean'
+    #     mean_da.attrs = {'comment': 'Global SSHA spatial mean'}
 
-        global_dam_removed_mean = global_dam - spatial_mean
-        global_dam_removed_mean.attrs = {
-            'comment': 'Global SSHA with global spatial mean removed'}
-        global_dsm['SSHA_GLOBAL_removed_global_spatial_mean'] = global_dam_removed_mean
+    #     global_dam_removed_mean = global_dam - spatial_mean
+    #     global_dam_removed_mean.attrs = {
+    #         'comment': 'Global SSHA with global spatial mean removed'}
+    #     global_dsm['SSHA_GLOBAL_removed_global_spatial_mean'] = global_dam_removed_mean
 
-        # Linear Trend
-        trend_ds = xr.open_dataset(bh_dir / 'pointwise_sealevel_trend.nc')
+    #     # Linear Trend
+    #     trend_ds = xr.open_dataset(bh_dir / 'pointwise_sealevel_trend.nc')
 
-        time_diff = (global_da.Time.values - np.datetime64('1992-10-02')
-                     ).astype(np.int32)/1e9
+    #     time_diff = (global_da.Time.values - np.datetime64('1992-10-02')
+    #                  ).astype(np.int32)/1e9
 
-        trend = (time_diff * trend_ds['pointwise_sealevel_trend']) + \
-            trend_ds['pointwise_sealevel_offset']
+    #     trend = (time_diff * trend_ds['pointwise_sealevel_trend']) + \
+    #         trend_ds['pointwise_sealevel_offset']
 
-        global_dam_detrended = global_dam - trend
-        global_dam_detrended.attrs = {
-            'comment': 'Global SSHA with linear trend removed'}
-        global_dsm['SSHA_GLOBAL_removed_linear_trend'] = global_dam_detrended
+    #     global_dam_detrended = global_dam - trend
+    #     global_dam_detrended.attrs = {
+    #         'comment': 'Global SSHA with linear trend removed'}
+    #     global_dsm['SSHA_GLOBAL_removed_linear_trend'] = global_dam_detrended
 
-        global_dsm = global_dsm.drop_vars('Z')
-        global_dsm = global_dsm.drop(['degree'])
+    #     global_dsm = global_dsm.drop_vars('Z')
+    #     global_dsm = global_dsm.drop(['degree'])
 
-        method = 3
+    #     method = 3
 
-        indicators_agg_das = {}
-        offset_agg_das = {}
-        pattern_and_anom_das = {}
+    #     indicators_agg_das = {}
+    #     offset_agg_das = {}
+    #     pattern_and_anom_das = {}
 
-        for pattern in patterns:
-            pattern_lats = pattern_ds[pattern]['Latitude']
-            pattern_lons = pattern_ds[pattern]['Longitude']
-            pattern_lons, pattern_lats = check_and_wrap(pattern_lons,
-                                                        pattern_lats)
+    #     for pattern in patterns:
+    #         pattern_lats = pattern_ds[pattern]['Latitude']
+    #         pattern_lons = pattern_ds[pattern]['Longitude']
+    #         pattern_lons, pattern_lats = check_and_wrap(pattern_lons,
+    #                                                     pattern_lats)
 
-            # Calculate pattern mean sea level
-            # pattern_area_dam = global_dam.sel(longitude=pattern_lons, latitude=pattern_lats)
-            # pattern_nzp = np.where(~np.isnan(pattern_area_dam), 1, np.nan)
-            # pattern_ecco_latlon_grid = ecco_latlon_grid.sel(longitude=pattern_lons,
-            #                                                 latitude=pattern_lats)
-            # pattern_area_nzp = np.sum(pattern_nzp * pattern_ecco_latlon_grid.area)
+    #         # Calculate pattern mean sea level
+    #         # pattern_area_dam = global_dam.sel(longitude=pattern_lons, latitude=pattern_lats)
+    #         # pattern_nzp = np.where(~np.isnan(pattern_area_dam), 1, np.nan)
+    #         # pattern_ecco_latlon_grid = ecco_latlon_grid.sel(longitude=pattern_lons,
+    #         #                                                 latitude=pattern_lats)
+    #         # pattern_area_nzp = np.sum(pattern_nzp * pattern_ecco_latlon_grid.area)
 
-            # pattern_area_spatial_mean = float(
-            #     np.nansum(pattern_area_dam * pattern_ecco_latlon_grid.area) / pattern_area_nzp)
+    #         # pattern_area_spatial_mean = float(
+    #         #     np.nansum(pattern_area_dam * pattern_ecco_latlon_grid.area) / pattern_area_nzp)
 
-            agg_da = global_dam_detrended.sel(
-                longitude=pattern_lons, latitude=pattern_lats)
-            agg_da.name = f'SSHA_{pattern}_removed_global_linear_trend'
-            agg_da = agg_da.assign_coords(
-                coords={'Time': np.datetime64(cycle_ds.cycle_center)})
-            try:
-                agg_da = agg_da.drop(['degree'])
-            except:
-                pass
+    #         agg_da = global_dam_detrended.sel(
+    #             longitude=pattern_lons, latitude=pattern_lats)
+    #         agg_da.name = f'SSHA_{pattern}_removed_global_linear_trend'
+    #         agg_da = agg_da.assign_coords(
+    #             coords={'Time': np.datetime64(cycle_ds.cycle_center)})
+    #         try:
+    #             agg_da = agg_da.drop(['degree'])
+    #         except:
+    #             pass
 
-            agg_ds = agg_da.to_dataset()
-            agg_ds.attrs = cycle_ds.attrs
+    #         agg_ds = agg_da.to_dataset()
+    #         agg_ds.attrs = cycle_ds.attrs
 
-            if cycle_type == 'along_track':
-                index_calc, ct,  ssha_anom = calc_at_climate_index(agg_ds, pattern, pattern_ds,
-                                                                   ann_cyc_in_pattern,
-                                                                   method=method)
-            else:
-                index_calc, ct, ssha_anom = calc_grid_climate_index(agg_ds, pattern, pattern_ds,
-                                                                    ann_cyc_in_pattern, ecco_latlon_grid,
-                                                                    mapping_dir, method=method)
-                ssha_anom = ssha_anom.rename(
-                    {'latitude': 'Latitude', 'longitude': 'Longitude'})
+    #         if cycle_type == 'along_track':
+    #             index_calc, ct,  ssha_anom = calc_at_climate_index(agg_ds, pattern, pattern_ds,
+    #                                                                ann_cyc_in_pattern,
+    #                                                                method=method)
+    #         else:
+    #             index_calc, ct, ssha_anom = calc_grid_climate_index(agg_ds, pattern, pattern_ds,
+    #                                                                 ann_cyc_in_pattern, ecco_latlon_grid,
+    #                                                                 mapping_dir, method=method)
+    #             ssha_anom = ssha_anom.rename(
+    #                 {'latitude': 'Latitude', 'longitude': 'Longitude'})
 
-            anom_name = f'SSHA_{pattern}_removed_global_linear_trend_and_seasonal_cycle'
-            ssha_anom.name = anom_name
-            ssha_anom.attrs = {}
-            agg_ds[anom_name] = ssha_anom
+    #         anom_name = f'SSHA_{pattern}_removed_global_linear_trend_and_seasonal_cycle'
+    #         ssha_anom.name = anom_name
+    #         ssha_anom.attrs = {}
+    #         agg_ds[anom_name] = ssha_anom
 
-            try:
-                agg_ds = agg_ds.drop_vars(['Z', 'latitude', 'longitude'])
-                agg_ds = agg_ds.drop_dims(['latitude', 'longitude'])
-            except Exception:
-                pass
-            pattern_and_anom_das[pattern] = agg_ds
+    #         try:
+    #             agg_ds = agg_ds.drop_vars(['Z', 'latitude', 'longitude'])
+    #             agg_ds = agg_ds.drop_dims(['latitude', 'longitude'])
+    #         except Exception:
+    #             pass
+    #         pattern_and_anom_das[pattern] = agg_ds
 
-            indicator_da = xr.DataArray(index_calc[1], coords={'time': ct})
-            indicator_da.name = f'{pattern}_index'
-            indicators_agg_das[pattern] = indicator_da
+    #         indicator_da = xr.DataArray(index_calc[1], coords={'time': ct})
+    #         indicator_da.name = f'{pattern}_index'
+    #         indicators_agg_das[pattern] = indicator_da
 
-            offsets_da = xr.DataArray(index_calc[0], coords={'time': ct})
-            offsets_da.name = f'{pattern}_offset'
-            offset_agg_das[pattern] = offsets_da
+    #         offsets_da = xr.DataArray(index_calc[0], coords={'time': ct})
+    #         offsets_da.name = f'{pattern}_offset'
+    #         offset_agg_das[pattern] = offsets_da
 
-        # Concatenate the list of individual DAs along time
-        # Merge into a single DataSet and append that pattern to all_indicators list
-        # List to hold DataSet objects for each pattern
-        all_indicators = []
-        all_patterns_and_anoms = []
+    #     # Concatenate the list of individual DAs along time
+    #     # Merge into a single DataSet and append that pattern to all_indicators list
+    #     # List to hold DataSet objects for each pattern
+    #     all_indicators = []
+    #     all_patterns_and_anoms = []
 
-        for pattern in patterns:
-            indicators_agg_da = indicators_agg_das[pattern]
-            offsets_agg_da = offset_agg_das[pattern]
+    #     for pattern in patterns:
+    #         indicators_agg_da = indicators_agg_das[pattern]
+    #         offsets_agg_da = offset_agg_das[pattern]
 
-            all_indicators.append(
-                xr.merge([offsets_agg_da, indicators_agg_da, mean_da]))
+    #         all_indicators.append(
+    #             xr.merge([offsets_agg_da, indicators_agg_da, mean_da]))
 
-            all_patterns_and_anoms.append(pattern_and_anom_das[pattern])
+    #         all_patterns_and_anoms.append(pattern_and_anom_das[pattern])
 
-        # FINISHED THROUGH ALL PATTERNS
-        # append all the datasets together into a single dataset to rule them all
-        indicator_ds = xr.merge(all_indicators)
-        indicator_ds = indicator_ds.expand_dims(Time=[indicator_ds.time.values])
-        indicator_ds = indicator_ds.drop(['time'])
-        pattern_anoms_ds = xr.merge(all_patterns_and_anoms)
-        globals_ds = global_dsm
+    #     # FINISHED THROUGH ALL PATTERNS
+    #     # append all the datasets together into a single dataset to rule them all
+    #     indicator_ds = xr.merge(all_indicators)
+    #     indicator_ds = indicator_ds.expand_dims(Time=[indicator_ds.time.values])
+    #     indicator_ds = indicator_ds.drop(['time'])
+    #     pattern_anoms_ds = xr.merge(all_patterns_and_anoms)
+    #     pattern_anoms_ds = pattern_anoms_ds.expand_dims(
+    #         Time=[pattern_anoms_ds.Time.values])
+    #     globals_ds = global_dsm
+    #     globals_ds = globals_ds.expand_dims(Time=[globals_ds.Time.values])
 
-        fp_date = date.replace('-', '_')
-        # date =
+    #     fp_date = date.replace('-', '_')
 
-        indicator_filename = f'{fp_date}_indicator.nc'
-        pattern_anoms_filename = f'{fp_date}_pattern_ssha_anoms.nc'
-        global_filename = f'{fp_date}_globals.nc'
+    #     indicator_filename = f'{fp_date}_indicator.nc'
+    #     pattern_anoms_filename = f'{fp_date}_pattern_ssha_anoms.nc'
+    #     global_filename = f'{fp_date}_globals.nc'
 
-        cycle_indicators_path = output_dir / 'cycle_indicators'
-        cycle_indicators_path.mkdir(parents=True, exist_ok=True)
-        indicator_output_path = cycle_indicators_path / indicator_filename
+    #     cycle_indicators_path = output_dir / 'cycle_indicators'
+    #     cycle_indicators_path.mkdir(parents=True, exist_ok=True)
+    #     indicator_output_path = cycle_indicators_path / indicator_filename
 
-        cycle_pattern_anoms_path = output_dir / 'cycle_pattern_anoms'
-        cycle_pattern_anoms_path.mkdir(parents=True, exist_ok=True)
-        pattern_anoms_output_path = cycle_pattern_anoms_path / pattern_anoms_filename
+    #     cycle_pattern_anoms_path = output_dir / 'cycle_pattern_anoms'
+    #     cycle_pattern_anoms_path.mkdir(parents=True, exist_ok=True)
+    #     pattern_anoms_output_path = cycle_pattern_anoms_path / pattern_anoms_filename
 
-        cycle_globals_path = output_dir / 'cycle_globals'
-        cycle_globals_path.mkdir(parents=True, exist_ok=True)
-        global_output_path = cycle_globals_path / global_filename
+    #     cycle_globals_path = output_dir / 'cycle_globals'
+    #     cycle_globals_path.mkdir(parents=True, exist_ok=True)
+    #     global_output_path = cycle_globals_path / global_filename
 
-        all_ds = [(indicator_ds, indicator_output_path),
-                  (pattern_anoms_ds, pattern_anoms_output_path),
-                  (globals_ds, global_output_path)]
+    #     all_ds = [(indicator_ds, indicator_output_path),
+    #               (pattern_anoms_ds, pattern_anoms_output_path),
+    #               (globals_ds, global_output_path)]
 
-        # # NetCDF encoding
-        encoding_each = {'zlib': True,
-                         'complevel': 5,
-                         'dtype': 'float32',
-                         'shuffle': True,
-                         '_FillValue': default_fillvals['f8']}
+    #     # # NetCDF encoding
+    #     encoding_each = {'zlib': True,
+    #                      'complevel': 5,
+    #                      'dtype': 'float32',
+    #                      'shuffle': True,
+    #                      '_FillValue': default_fillvals['f8']}
 
-        for ds, output_path in all_ds:
+    #     for ds, output_path in all_ds:
 
-            coord_encoding = {}
-            for coord in ds.coords:
-                coord_encoding[coord] = {'_FillValue': None,
-                                         'dtype': 'float32',
-                                         'complevel': 6}
+    #         coord_encoding = {}
+    #         for coord in ds.coords:
+    #             coord_encoding[coord] = {'_FillValue': None,
+    #                                      'dtype': 'float32',
+    #                                      'complevel': 6}
 
-                # if 'Time' in coord:
-                #     coord_encoding[coord] = {'_FillValue': None,
-                #                              'zlib': True,
-                #                              'contiguous': False,
-                #                              'shuffle': False}
+    #             # if 'Time' in coord:
+    #             #     coord_encoding[coord] = {'_FillValue': None,
+    #             #                              'zlib': True,
+    #             #                              'contiguous': False,
+    #             #                              'shuffle': False}
 
-            var_encoding = {
-                var: encoding_each for var in ds.data_vars}
+    #         var_encoding = {
+    #             var: encoding_each for var in ds.data_vars}
 
-            encoding = {**coord_encoding, **var_encoding}
+    #         encoding = {**coord_encoding, **var_encoding}
 
-            ds.to_netcdf(output_path, encoding=encoding)
-            ds.close()
+    #         ds.to_netcdf(output_path, encoding=encoding)
+    #         ds.close()
 
+    print('Saving indicators')
     cycle_indicators_path = output_dir / 'cycle_indicators'
     indicator_ds = xr.open_mfdataset(f'{cycle_indicators_path}/*.nc')
     indicator_ds.to_netcdf(output_dir / 'complete_indicator_ds.nc')
-    print(indicator_ds)
-    exit()
-
-    # # Concatenate the list of individual DAs along time
-    # # Merge into a single DataSet and append that pattern to all_indicators list
-    # # List to hold DataSet objects for each pattern
-    # all_indicators = []
-    # all_patterns_and_anoms = []
-
-    # print('Combining patterns...')
-    # for pattern in patterns:
-    #     print('...')
-    #     indicators_agg_da = indicators_agg_das[pattern]
-    #     offsets_agg_da = offset_agg_das[pattern]
-
-    #     all_indicators.append(
-    #         xr.merge([offsets_agg_da, indicators_agg_da, spatial_mean_da]))
-
-    #     all_patterns_and_anoms.append(pattern_and_anom_das[pattern])
-
-    # # FINISHED THROUGH ALL PATTERNS
-    # # append all the datasets together into a single dataset to rule them all
-    # print('Merging indicators')
-    # new_indicators = xr.merge(all_indicators)
-    # print('Merging patterns and anoms')
-    # new_patterns_and_anoms = xr.merge(all_patterns_and_anoms)
-    # print('Merging globals')
-    # new_globals = global_ds
-
-    # # Open existing indicator ds to add new values if needed
-    # if update:
-    #     print('\nAdding calculated values to indicator netCDF.')
-
-    #     # PROCESS INDICATORS
-    #     indicator_ds = xr.open_dataset(
-    #         indicator_metadata['indicator_filepath_s'])
-
-    #     # Remove times of new indicator values from original indicator DS if they exist
-    #     # (this effectively updates the values)
-    #     indicator_ds = indicator_ds.where(~indicator_ds['time'].isin(
-    #         np.unique(new_indicators['time'])), drop=True)
-
-    #     # And use xr.concat to add in the new values (concat will create multiple entries for the
-    #     # same time value).
-    #     indicator_ds = xr.concat([indicator_ds, new_indicators], 'time')
-
-    #     # Finally, sort to get things in the right order
-    #     indicator_ds = indicator_ds.sortby('time')
-
-    #     # Reapeat for other files
-
-    #     # PROCESS PATTERNS AND ANOMS
-    #     patterns_and_anoms_ds = xr.open_dataset(
-    #         indicator_metadata['patterns_anoms_filepath_s'])
-    #     # Load is required for sorting
-    #     patterns_and_anoms_ds.load()
-    #     patterns_and_anoms_ds = patterns_and_anoms_ds.where(~patterns_and_anoms_ds['Time'].isin(
-    #         np.unique(new_patterns_and_anoms['Time'])), drop=True)
-    #     patterns_and_anoms_ds = xr.concat(
-    #         [patterns_and_anoms_ds, new_patterns_and_anoms], 'Time')
-    #     patterns_and_anoms_ds = patterns_and_anoms_ds.sortby('Time')
-
-    #     # PROCESS GLOBALS
-    #     globals_ds = xr.open_dataset(indicator_metadata['globals_filepath_s'])
-    #     # Load is required for sorting
-    #     globals_ds.load()
-    #     globals_ds = globals_ds.where(~globals_ds['Time'].isin(
-    #         np.unique(new_globals['Time'])), drop=True)
-    #     globals_ds = xr.concat([globals_ds, new_globals], 'Time')
-    #     globals_ds = globals_ds.sortby('Time')
-
-    # else:
-    #     indicator_ds = new_indicators
-    #     patterns_and_anoms_ds = new_patterns_and_anoms
-    #     globals_ds = new_globals
-
-    # # # NetCDF encoding
-    # # encoding_each = {'zlib': True,
-    # #                  'complevel': 5,
-    # #                  'dtype': 'float32',
-    # #                  'shuffle': True,
-    # #                  '_FillValue': default_fillvals['f8']}
-
-    # # coord_encoding = {}
-    # # for coord in indicator_ds.coords:
-    # #     coord_encoding[coord] = {'_FillValue': None,
-    # #                              'dtype': 'float32',
-    # #                              'complevel': 6}
-
-    # #     if 'Time' in coord:
-    # #         coord_encoding[coord] = {'_FillValue': None,
-    # #                                  'zlib': True,
-    # #                                  'contiguous': False,
-    # #                                  'shuffle': False}
-
-    # # var_encoding = {var: encoding_each for var in indicator_ds.data_vars}
-
-    # # encoding = {**coord_encoding, **var_encoding}
-
-    # indicator_ds.to_netcdf(indicator_output_path)
-    # patterns_and_anoms_ds.to_netcdf(patterns_and_anoms_output_path)
-    # globals_ds.to_netcdf(global_output_path)
+    indicator_ds.close()
+    print('Saving pattern anoms')
+    pattern_anoms_path = output_dir / 'cycle_pattern_anoms'
+    pattern_anoms_ds = xr.open_mfdataset(
+        f'{pattern_anoms_path}/*.nc', concat_dim='Time')
+    pattern_anoms_ds.to_netcdf(output_dir / 'complete_pattern_anoms_ds.nc')
+    print('Saving globals')
+    globals_path = output_dir / 'cycle_globals'
+    globals_ds = xr.open_mfdataset(f'{globals_path}/*.nc', concat_dim='Time')
+    globals_ds.to_netcdf(output_dir / 'complete_globals_ds.nc')
 
     # ==============================================
     # Create or update indicator on Solr
     # ==============================================
 
-    indicator_meta = {
-        'type_s': 'indicator',
-        'start_date_dt': np.datetime_as_string(indicator_ds.time.values[0], unit='s'),
-        'end_date_dt': np.datetime_as_string(indicator_ds.time.values[-1], unit='s'),
-        'modified_time_dt': chk_time,
-        'indicator_filename_s': indicator_filename,
-        'indicator_filepath_s': str(indicator_output_path),
-        'indicator_checksum_s': md5(indicator_output_path),
-        'indicator_file_size_l': indicator_output_path.stat().st_size,
-        'patterns_anoms_filename_s': patterns_anoms_filename,
-        'patterns_anoms_filepath_s': str(patterns_and_anoms_output_path),
-        'patterns_anoms_checksum_s': md5(patterns_and_anoms_output_path),
-        'patterns_anoms_file_size_l': patterns_and_anoms_output_path.stat().st_size,
-        'globals_filename_s': global_filename,
-        'globals_filepath_s': str(global_output_path),
-        'globals_checksum_s': md5(global_output_path),
-        'globals_file_size_l': global_output_path.stat().st_size
-    }
+    # indicator_meta = {
+    #     'type_s': 'indicator',
+    #     'start_date_dt': np.datetime_as_string(indicator_ds.time.values[0], unit='s'),
+    #     'end_date_dt': np.datetime_as_string(indicator_ds.time.values[-1], unit='s'),
+    #     'modified_time_dt': chk_time,
+    #     'indicator_filename_s': indicator_filename,
+    #     'indicator_filepath_s': str(indicator_output_path),
+    #     'indicator_checksum_s': md5(indicator_output_path),
+    #     'indicator_file_size_l': indicator_output_path.stat().st_size,
+    #     'patterns_anoms_filename_s': patterns_anoms_filename,
+    #     'patterns_anoms_filepath_s': str(patterns_and_anoms_output_path),
+    #     'patterns_anoms_checksum_s': md5(patterns_and_anoms_output_path),
+    #     'patterns_anoms_file_size_l': patterns_and_anoms_output_path.stat().st_size,
+    #     'globals_filename_s': global_filename,
+    #     'globals_filepath_s': str(global_output_path),
+    #     'globals_checksum_s': md5(global_output_path),
+    #     'globals_file_size_l': global_output_path.stat().st_size
+    # }
 
-    if update:
-        indicator_meta['id'] = indicator_query[0]['id']
+    # if update:
+    #     indicator_meta['id'] = indicator_query[0]['id']
 
     # # Update Solr with dataset metadata
     # resp = solr_update(config, [indicator_meta])
