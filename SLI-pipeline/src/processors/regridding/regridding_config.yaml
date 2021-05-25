@@ -1,10 +1,16 @@
 # =====================================================
-# Dataset
+# Processing
 # =====================================================
-ds_name: "ssh_SENTINEL_3A_s1-rads" # Name for dataset
 version: 1.0
-processor: along_track
-data_type: along_track
+
+# =====================================================
+# Along Track
+# =====================================================
+# Here, you can dictate which instruments will be combined
+# into a single along track cycle.
+
+jason_3_date_range: ["1992-01-01", "2020-12-31"]
+sentinel_date_range: ["1992-01-01", "2020-12-31"]
 
 # =====================================================
 # Solr

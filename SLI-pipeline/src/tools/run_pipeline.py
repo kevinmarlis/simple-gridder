@@ -99,14 +99,16 @@ def show_menu():
         print(f'\n{" OPTIONS ":-^35}')
         print('1) Harvest and process all datasets')
         print('2) Harvest all datasets')
-        print('3) Process all datasets')
-        print('4) Dataset input')
-        print('5) Calculate index values')
+        print('3) Update cycles for all datasets')
+        print('4) Regrid cycles for all datasets')
+        print('5) Dataset input')
+        print('6) Calculate index values')
         selection = input('Enter option number: ')
 
-        if selection in ['1', '2', '3', '4', '5']:
+        if selection in ['1', '2', '3', '4', '5', '6']:
             return selection
-        print(f'Unknown option entered, "{selection}", please enter a valid option\n')
+        print(
+            f'Unknown option entered, "{selection}", please enter a valid option\n')
 
 
 def print_log(log_path: str):
@@ -131,15 +133,18 @@ def print_log(log_path: str):
         log_line = yaml.load(line, yaml.Loader)
         if 'index' not in log_line['name']:
             ds = log_line['name'].replace('pipeline.', '').replace(
-                '.harvester', '').replace('.processing', '')
-            preprocessing_step = log_line['name'].replace('pipeline.', '').replace(f'{ds}.', '')
+                '.harvester', '').replace('.cycle_creation', '')
+            preprocessing_step = log_line['name'].replace(
+                'pipeline.', '').replace(f'{ds}.', '')
 
             if log_line['level'] == 'INFO':
-                dataset_statuses[ds][preprocessing_step].append(('INFO', log_line["message"]))
+                dataset_statuses[ds][preprocessing_step].append(
+                    ('INFO', log_line["message"]))
 
             if log_line['level'] == 'ERROR':
                 if ('ERROR', log_line["message"]) not in dataset_statuses[ds][preprocessing_step]:
-                    dataset_statuses[ds][preprocessing_step].append(('ERROR', log_line["message"]))
+                    dataset_statuses[ds][preprocessing_step].append(
+                        ('ERROR', log_line["message"]))
         else:
             index_statuses.append((log_line['level'], log_line['message']))
 
@@ -207,7 +212,7 @@ def run_harvester(datasets, harv_path, output_dir):
         print(ROW)
 
 
-def run_processing(datasets, proc_path, output_dir, reprocess):
+def run_cycle_creation(datasets, proc_path, output_dir, reprocess):
     """
         Calls the processor with the dataset specific config file path for each
         dataset in datasets.
@@ -218,13 +223,13 @@ def run_processing(datasets, proc_path, output_dir, reprocess):
             output_dir (Pathh): The path to the output directory.
     """
     print('\n' + ROW)
-    print(' \033[36mRunning processing\033[0m '.center(66, '='))
+    print(' \033[36mRunning cycle creation\033[0m '.center(66, '='))
     print(ROW + '\n')
 
     for ds in datasets:
-        proc_logger = logging.getLogger(f'pipeline.{ds}.processing')
+        proc_logger = logging.getLogger(f'pipeline.{ds}.cycle_creation')
         try:
-            print(f'\033[93mRunning processing for {ds}\033[0m')
+            print(f'\033[93mRunning cycle creation for {ds}\033[0m')
             print(ROW)
 
             config_path = Path(
@@ -235,23 +240,69 @@ def run_processing(datasets, proc_path, output_dir, reprocess):
             path_to_code = Path(f'{proc_path}')
             sys.path.insert(1, str(path_to_code))
 
-            ret_import = importlib.import_module('processing')
+            ret_import = importlib.import_module('cycle_creation')
             ret_import = importlib.reload(ret_import)
 
-            status = ret_import.processing(config=config,
-                                           output_path=output_dir,
-                                           reprocess=reprocess)
+            status = ret_import.cycle_creation(config=config,
+                                               output_path=output_dir,
+                                               reprocess=reprocess)
 
             sys.path.remove(str(path_to_code))
 
-            proc_logger.info(f'Processing complete. {status}')
-            print('\033[92mProcessing successful\033[0m')
+            proc_logger.info(f'Cycle creation complete. {status}')
+            print('\033[92mCycle creation successful\033[0m')
         except Exception as e:
             print(e)
             sys.path.remove(str(path_to_code))
-            proc_logger.error('Processing failed: %s', e)
-            print('\033[91mProcessing failed\033[0m')
+            proc_logger.error('Cycle creation failed: %s', e)
+            print('\033[91mCycle creation failed\033[0m')
         print(ROW)
+
+
+def run_cycle_regridding(proc_path, output_dir, reprocess):
+    """
+        Calls the processor with the dataset specific config file path for each
+        dataset in datasets.
+
+        Parameters:
+            datasets (List[str]): A list of dataset names.
+            proc_path (Path): The path to the processor directory.
+            output_dir (Pathh): The path to the output directory.
+    """
+    print('\n' + ROW)
+    print(' \033[36mRunning cycle regridding\033[0m '.center(66, '='))
+    print(ROW + '\n')
+
+    proc_logger = logging.getLogger(f'pipeline.cycle_regridding')
+    try:
+        print(f'\033[93mRunning cycle regridding\033[0m')
+        print(ROW)
+
+        path_to_code = Path(f'{proc_path}/regridding/')
+
+        config_path = path_to_code / 'regridding_config.yaml'
+        with open(config_path, "r") as stream:
+            config = yaml.load(stream, yaml.Loader)
+
+        sys.path.insert(1, str(path_to_code))
+
+        ret_import = importlib.import_module('regridding')
+        ret_import = importlib.reload(ret_import)
+
+        et_import.regridding(config=config,
+                             output_dir=output_dir,
+                             reprocess=reprocess)
+
+        sys.path.remove(str(path_to_code))
+
+        proc_logger.info('Cycle regridding complete.')
+        print('\033[92mCycle regridding successful\033[0m')
+    except Exception as e:
+        print(e)
+        sys.path.remove(str(path_to_code))
+        proc_logger.error('Cycle regridding failed: %s', e)
+        print('\033[91mCycle regridding failed\033[0m')
+    print(ROW)
 
 
 def run_indexing(proc_path, output_dir, reprocess):
@@ -360,11 +411,13 @@ if __name__ == '__main__':
     # Setup console handler to print to console
     ch = logging.StreamHandler()
     ch.setLevel(logging.ERROR)
-    ch_formatter = logging.Formatter("'%(filename)s':'%(lineno)d,  %(message)s'")
+    ch_formatter = logging.Formatter(
+        "'%(filename)s':'%(lineno)d,  %(message)s'")
     ch.setFormatter(ch_formatter)
     logger.addHandler(ch)
 
-    DATASETS = [ds.name for ds in PATH_TO_DATASETS.iterdir() if ds.name != '.DS_Store']
+    DATASETS = [ds.name for ds in PATH_TO_DATASETS.iterdir()
+                if ds.name != '.DS_Store']
 
     CHOSEN_OPTION = show_menu() if args.options_menu and not REPROCESS else '1'
 
@@ -372,7 +425,8 @@ if __name__ == '__main__':
     if CHOSEN_OPTION == '1':
         for dataset in DATASETS:
             run_harvester([dataset], PATH_TO_HARVESTERS, OUTPUT_DIR)
-            run_processing([dataset], PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            run_cycle_creation([dataset], PATH_TO_PROCESSORS,
+                               OUTPUT_DIR, REPROCESS)
 
         run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
 
@@ -384,12 +438,17 @@ if __name__ == '__main__':
     # Run processing
     elif CHOSEN_OPTION == '3':
         for dataset in DATASETS:
-            run_processing([dataset], PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            run_cycle_creation([dataset], PATH_TO_PROCESSORS,
+                               OUTPUT_DIR, REPROCESS)
 
-        run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+    # Run cycle regridding
+    elif CHOSEN_OPTION == '4':
+        run_cycle_regridding(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+
+        # run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
 
     # Manually enter dataset and pipeline step(s)
-    elif CHOSEN_OPTION == '4':
+    elif CHOSEN_OPTION == '5':
         ds_dict = dict(enumerate(DATASETS, start=1))
         while True:
             print('\nAvailable datasets:\n')
@@ -399,14 +458,15 @@ if __name__ == '__main__':
             ds_index = input('\nEnter dataset number: ')
 
             if not ds_index.isdigit() or int(ds_index) not in range(1, len(DATASETS)+1):
-                print(f'Invalid dataset, "{ds_index}", please enter a valid selection')
+                print(
+                    f'Invalid dataset, "{ds_index}", please enter a valid selection')
             else:
                 break
 
         CHOSEN_DS = ds_dict[int(ds_index)]
         print(f'\nUsing {CHOSEN_DS} dataset')
 
-        STEPS = ['harvest', 'process', 'all']
+        STEPS = ['harvest', 'create cycles', 'regrid cycles', 'all']
         steps_dict = dict(enumerate(STEPS, start=1))
 
         while True:
@@ -425,15 +485,20 @@ if __name__ == '__main__':
 
         if 'harvest' in wanted_steps:
             run_harvester([CHOSEN_DS], PATH_TO_HARVESTERS, OUTPUT_DIR)
-        if 'process' in wanted_steps:
-            run_processing([CHOSEN_DS], PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
-            run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+        if 'create' in wanted_steps:
+            run_cycle_creation(
+                [CHOSEN_DS], PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+        if 'regrid' in wanted_steps:
+            run_cycle_regridding(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            # run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
         if wanted_steps == 'all':
             run_harvester([CHOSEN_DS], PATH_TO_HARVESTERS, OUTPUT_DIR)
-            run_processing([CHOSEN_DS], PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
-            run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            run_cycle_creation(
+                [CHOSEN_DS], PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            run_cycle_regridding(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            # run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
 
-    elif CHOSEN_OPTION == '5':
+    elif CHOSEN_OPTION == '6':
         run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
 
     print_log(logger_path)
