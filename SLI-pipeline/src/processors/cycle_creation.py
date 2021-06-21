@@ -4,6 +4,7 @@ This module handles dataset processing into 10 day cycles.
 import sys
 import logging
 import hashlib
+import warnings
 from datetime import datetime, timedelta
 import requests
 import pickle
@@ -14,7 +15,11 @@ import pyresample as pr
 from netCDF4 import default_fillvals  # pylint: disable=no-name-in-module
 from pyresample.utils import check_and_wrap
 
+warnings.filterwarnings("ignore")
+
+
 log = logging.getLogger(__name__)
+log.setLevel(logging.ERROR)
 
 
 def md5(fpath):
@@ -457,7 +462,8 @@ def cycle_ds_encoding(cycle_ds, ds_name, center_date):
                                      'shuffle': False}
             # To account for time bounds in 1812 dataset
             if '1812' in ds_name:
-                units_time = datetime.strftime(center_date, "%Y-%m-%d %H:%M:%S")
+                units_time = datetime.strftime(
+                    center_date, "%Y-%m-%d %H:%M:%S")
                 coord_encoding[coord]['units'] = f'days since {units_time}'
 
         if 'Lat' in coord or 'Lon' in coord:
@@ -509,7 +515,7 @@ def post_process_solr_update(config, ds_metadata):
     return processing_status
 
 
-def cycle_creation(config, output_path, reprocess):
+def cycle_creation(config, output_path, reprocess, log_time):
     """
     Generates encoding dictionary used for saving the cycle netCDF file.
     The measures gridded dataset (1812) has additional units encoding requirements.
@@ -520,6 +526,21 @@ def cycle_creation(config, output_path, reprocess):
         reprocess (bool): denotes if all cycles should be reprocessed
     """
 
+    # Set file handler for log using output_path
+    formatter = logging.Formatter('%(asctime)s: %(message)s')
+
+    logs_path = Path(output_path / f'logs/{log_time}')
+    logs_path.mkdir(parents=True, exist_ok=True)
+
+    file_handler = logging.FileHandler(logs_path / 'cycle_creation.log')
+    file_handler.setLevel(logging.ERROR)
+    file_handler.setFormatter(formatter)
+
+    log.addHandler(file_handler)
+
+    # =====================================================
+    # Setup variables from config.yaml
+    # =====================================================
     ds_name = config['ds_name']
     version = config['version']
     processor = config['processor']
@@ -536,9 +557,15 @@ def cycle_creation(config, output_path, reprocess):
         ds_metadata = solr_query(
             config, ['type_s:dataset', f'dataset_s:{ds_name}'])[0]
     except:
-        log.exception('Error while querying for dataset entry.')
+        log.exception(
+            f'Error while querying for {ds_name} dataset entry. Cannot create cycles if harvesting has not been run. Check Solr.')
         raise Exception(
-            'Cannot run processing if harvesting has not been run. Check Solr.')
+            'No granules have been harvested. Check Solr.')
+
+    if 'end_date_dt' not in ds_metadata.keys():
+        log.exception(f'No granules harvested for {ds_name}.')
+        raise Exception(
+            f'No granules harvested for {ds_name}. Check Solr.')
 
     # Query for all existing cycles in Solr
     solr_cycles = solr_query(config, ['type_s:cycle', f'dataset_s:{ds_name}'])
@@ -605,48 +632,6 @@ def cycle_creation(config, output_path, reprocess):
                     cycle_ds, granule_count = process_measures_grids(cycle_granules,
                                                                      ds_metadata,
                                                                      date_strs)
-
-                    # # ======================================================
-                    # # Regrid the cycle to ECCO latlon and pattern grids
-                    # # ======================================================
-
-                    # ref_grids_path = Path().resolve() / 'Sea-Level-Indicators' / \
-                    #     'SLI-pipeline' / 'ref_grds'
-
-                    # global_path = ref_grids_path / 'GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'
-
-                    # global_ds = xr.open_dataset(global_path)
-                    # regridded_ds = measures_regridder(
-                    #     cycle_ds, global_ds, output_path)
-
-                    # cycle_dir = output_path / ds_name / 'cycle_products'
-                    # regridded_dir = cycle_dir / 'global_mapping'
-                    # regridded_dir.mkdir(parents=True, exist_ok=True)
-                    # global_fp = regridded_dir / \
-                    #     f'ssha_regridded_to_global_ECCO_{datetime.strftime(center_date, "%Y%m%d")}.nc'
-                    # encoding = cycle_ds_encoding(
-                    #     regridded_ds, ds_name, center_date)
-                    # regridded_ds.to_netcdf(global_fp, encoding=encoding)
-
-                    # patterns = [
-                    #     grid_file for grid_file in ref_grids_path.iterdir() if 'pattern_and_index' in str(grid_file)]
-
-                    # # TODO: establish pattern regridded metadata and how to include
-                    # # location/metadata in Solr
-                    # for pattern in patterns:
-                    #     ds = xr.open_dataset(pattern)
-                    #     pattern_name = str(pattern).split('/')[-1].split('_')[0]
-                    #     regridded_ds = pattern_regridder(
-                    #         cycle_ds, ds, pattern_name, output_path)
-
-                    #     regridded_dir = cycle_dir / f'{pattern_name}_mapping'
-                    #     regridded_dir.mkdir(parents=True, exist_ok=True)
-                    #     regridded_fp = regridded_dir / \
-                    #         f'ssha_regridded_to_{pattern_name}_{datetime.strftime(center_date, "%Y%m%d")}.nc'
-
-                    #     encoding = cycle_ds_encoding(
-                    #         regridded_ds, ds_name, center_date)
-                    #     regridded_ds.to_netcdf(regridded_fp, encoding=encoding)
 
                 # Create netcdf encoding for cycle
                 encoding = cycle_ds_encoding(cycle_ds, ds_name, center_date)

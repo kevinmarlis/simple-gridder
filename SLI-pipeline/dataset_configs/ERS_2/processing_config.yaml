@@ -1,7 +1,7 @@
 # =====================================================
 # Dataset
 # =====================================================
-ds_name: "ssh_SENTINEL_3A_s1-rads" # Name for dataset
+ds_name: "ERS_2" # Name for dataset
 version: 1.0
 processor: along_track
 data_type: along_track

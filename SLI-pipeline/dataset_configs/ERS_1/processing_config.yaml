@@ -1,10 +1,10 @@
 # =====================================================
 # Dataset
 # =====================================================
-ds_name: "sla_SEA_SURFACE_HEIGHT_ALT_GRIDS_L4_2SATS_5DAY_6THDEG_V_JPL1812" # Name for dataset
-version: 1.2
-processor: measures_grids
-data_type: gridded
+ds_name: "ERS_1" # Name for dataset
+version: 1.0
+processor: along_track
+data_type: along_track
 
 # =====================================================
 # Solr

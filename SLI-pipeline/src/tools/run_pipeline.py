@@ -11,11 +11,24 @@ from tkinter import filedialog
 from collections import defaultdict
 import requests
 import yaml
+from datetime import datetime
 
 # Hardcoded output directory path for pipeline files
 # Leave blank to be prompted for an output directory
 OUTPUT_DIR = ''
-OUTPUT_DIR = Path('/Users/kevinmarlis/Developer/JPL/sealevel_output/')
+OUTPUT_DIR = Path('/Users/marlis/Developer/SLI/sealevel_output/')
+
+LOG_TIME = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+if OUTPUT_DIR:
+    logs_path = Path(OUTPUT_DIR / f'logs/{LOG_TIME}/')
+    logs_path.mkdir(parents=True, exist_ok=True)
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
+
+# formatter = logging.Formatter('%(asctime)s: %(message)s')
+
 
 ROW = '=' * 57
 
@@ -111,18 +124,18 @@ def show_menu():
             f'Unknown option entered, "{selection}", please enter a valid option\n')
 
 
-def print_log(log_path: str):
+def print_log(output_dir):
     """
         Prints pipeline log summary.
 
         Parameters:
-            log_path (str): The path to the log file.
+            output_dir (str): The path to the output directory.
     """
 
     print('\n' + ROW)
     print(' \033[36mPrinting log\033[0m '.center(66, '='))
     print(ROW)
-
+    log_path = output_dir / f'logs/{LOG_TIME}/pipeline.log'
     dataset_statuses = defaultdict(lambda: defaultdict(list))
     index_statuses = []
     # Parse logger for messages
@@ -131,22 +144,34 @@ def print_log(log_path: str):
 
     for line in logs:
         log_line = yaml.load(line, yaml.Loader)
-        if 'index' not in log_line['name']:
-            ds = log_line['name'].replace('pipeline.', '').replace(
-                '.harvester', '').replace('.cycle_creation', '')
-            preprocessing_step = log_line['name'].replace(
-                'pipeline.', '').replace(f'{ds}.', '')
 
-            if log_line['level'] == 'INFO':
-                dataset_statuses[ds][preprocessing_step].append(
-                    ('INFO', log_line["message"]))
+        if 'harvesting' in log_line['message']:
+            ds = log_line['message'].split()[0]
+            step = 'harvesting'
+            msg = log_line['message'].replace(f'{ds} ', '', 1)
+            msg = msg[0].upper() + msg[1:]
 
-            if log_line['level'] == 'ERROR':
-                if ('ERROR', log_line["message"]) not in dataset_statuses[ds][preprocessing_step]:
-                    dataset_statuses[ds][preprocessing_step].append(
-                        ('ERROR', log_line["message"]))
-        else:
-            index_statuses.append((log_line['level'], log_line['message']))
+        elif 'creation' in log_line['message']:
+            ds = log_line['message'].split()[0]
+            step = 'cycle creation'
+            msg = log_line['message'].replace(f'{ds} ', '', 1)
+            msg = msg[0].upper() + msg[1:]
+
+        elif 'regridding' in log_line['message']:
+            ds = 'non dataset specific steps'
+            step = 'regridding'
+            msg = log_line['message']
+
+        elif 'Index' in log_line['message']:
+            ds = 'non dataset specific steps'
+            step = 'index calculation'
+            msg = log_line['message']
+
+        if log_line['level'] == 'INFO':
+            dataset_statuses[ds][step] = [('INFO', msg)]
+
+        if log_line['level'] == 'ERROR':
+            dataset_statuses[ds][step] = [('ERROR', msg)]
 
     # Print dataset status summaries
     for ds, steps in dataset_statuses.items():
@@ -167,14 +192,13 @@ def print_log(log_path: str):
                 print(f'\t\033[91m{message}\033[0m')
 
 
-def run_harvester(datasets, harv_path, output_dir):
+def run_harvester(datasets, output_dir):
     """
         Calls the harvester with the dataset specific config file path for each
         dataset in datasets.
 
         Parameters:
             datasets (List[str]): A list of dataset names.
-            harv_path (Path): The path to the harvester directory.
             output_dir (Path): The path to the output directory.
     """
     print(f'\n{ROW}')
@@ -182,7 +206,7 @@ def run_harvester(datasets, harv_path, output_dir):
     print(f'{ROW}\n')
 
     for ds in datasets:
-        harv_logger = logging.getLogger(f'pipeline.{ds}.harvester')
+        # harv_logger = logging.getLogger(f'pipeline.{ds}.harvester')
         try:
             print(f'\033[93mRunning harvester for {ds}\033[0m')
             print(ROW)
@@ -192,42 +216,36 @@ def run_harvester(datasets, harv_path, output_dir):
             with open(config_path, "r") as stream:
                 config = yaml.load(stream, yaml.Loader)
 
-            path_to_code = Path(f'{harv_path}/')
-            sys.path.insert(1, str(path_to_code))
+            from harvesters.harvester import harvester
 
-            ret_import = importlib.import_module('harvester')
-            ret_import = importlib.reload(ret_import)
+            status = harvester(
+                config=config, output_path=output_dir, log_time=LOG_TIME)
 
-            status = ret_import.harvester(config=config, output_path=output_dir)
-
-            sys.path.remove(str(path_to_code))
-
-            harv_logger.info(f'Harvesting complete. {status}')
+            log.info(f'{ds} harvesting complete. {status}')
             print('\033[92mHarvest successful\033[0m')
         except Exception as e:
-            sys.path.remove(str(path_to_code))
-            harv_logger.error('Harvesting failed: %s', e)
+            print(e)
+            log.error(f'{ds} harvesting failed. {e}')
 
             print('\033[91mHarvesting failed\033[0m')
         print(ROW)
 
 
-def run_cycle_creation(datasets, proc_path, output_dir, reprocess):
+def run_cycle_creation(datasets, output_dir, reprocess):
     """
         Calls the processor with the dataset specific config file path for each
         dataset in datasets.
 
         Parameters:
             datasets (List[str]): A list of dataset names.
-            proc_path (Path): The path to the processor directory.
             output_dir (Pathh): The path to the output directory.
+            reprocess: Boolean to force reprocessing
     """
     print('\n' + ROW)
     print(' \033[36mRunning cycle creation\033[0m '.center(66, '='))
     print(ROW + '\n')
 
     for ds in datasets:
-        proc_logger = logging.getLogger(f'pipeline.{ds}.cycle_creation')
         try:
             print(f'\033[93mRunning cycle creation for {ds}\033[0m')
             print(ROW)
@@ -237,114 +255,90 @@ def run_cycle_creation(datasets, proc_path, output_dir, reprocess):
             with open(config_path, "r") as stream:
                 config = yaml.load(stream, yaml.Loader)
 
-            path_to_code = Path(f'{proc_path}')
-            sys.path.insert(1, str(path_to_code))
+            from processors.cycle_creation import cycle_creation
 
-            ret_import = importlib.import_module('cycle_creation')
-            ret_import = importlib.reload(ret_import)
+            status = cycle_creation(config=config,
+                                    output_path=output_dir,
+                                    reprocess=reprocess,
+                                    log_time=LOG_TIME)
 
-            status = ret_import.cycle_creation(config=config,
-                                               output_path=output_dir,
-                                               reprocess=reprocess)
-
-            sys.path.remove(str(path_to_code))
-
-            proc_logger.info(f'Cycle creation complete. {status}')
+            log.info(f'{ds} cycle creation complete. {status}')
             print('\033[92mCycle creation successful\033[0m')
         except Exception as e:
             print(e)
-            sys.path.remove(str(path_to_code))
-            proc_logger.error('Cycle creation failed: %s', e)
+            log.error(f'{ds} cycle creation failed. {e}')
             print('\033[91mCycle creation failed\033[0m')
         print(ROW)
 
 
-def run_cycle_regridding(proc_path, output_dir, reprocess):
+def run_cycle_regridding(src_path, output_dir, reprocess):
     """
         Calls the processor with the dataset specific config file path for each
         dataset in datasets.
 
         Parameters:
             datasets (List[str]): A list of dataset names.
-            proc_path (Path): The path to the processor directory.
             output_dir (Pathh): The path to the output directory.
+            reprocess: Boolean to force reprocessing
     """
     print('\n' + ROW)
     print(' \033[36mRunning cycle regridding\033[0m '.center(66, '='))
     print(ROW + '\n')
 
-    proc_logger = logging.getLogger(f'pipeline.cycle_regridding')
     try:
         print(f'\033[93mRunning cycle regridding\033[0m')
         print(ROW)
 
-        path_to_code = Path(f'{proc_path}/regridding/')
-
-        config_path = path_to_code / 'regridding_config.yaml'
+        config_path = src_path / 'processors/regridding/regridding_config.yaml'
         with open(config_path, "r") as stream:
             config = yaml.load(stream, yaml.Loader)
 
-        sys.path.insert(1, str(path_to_code))
+        from processors.regridding.regridding import regridding
 
-        ret_import = importlib.import_module('regridding')
-        ret_import = importlib.reload(ret_import)
+        regridding(config=config, output_dir=output_dir,
+                   reprocess=reprocess, log_time=LOG_TIME)
 
-        et_import.regridding(config=config,
-                             output_dir=output_dir,
-                             reprocess=reprocess)
-
-        sys.path.remove(str(path_to_code))
-
-        proc_logger.info('Cycle regridding complete.')
+        log.info('Cycle regridding complete.')
         print('\033[92mCycle regridding successful\033[0m')
     except Exception as e:
         print(e)
-        sys.path.remove(str(path_to_code))
-        proc_logger.error('Cycle regridding failed: %s', e)
+        log.error(f'Cycle regridding failed. {e}')
         print('\033[91mCycle regridding failed\033[0m')
     print(ROW)
 
 
-def run_indexing(proc_path, output_dir, reprocess):
+def run_indexing(src_path, output_dir, reprocess):
     """
         Calls the indicator processing file.
 
         Parameters:
-            proc_path (Path): The path to the processor directory.
+            src_path (Path): The path to the src directory.
             output_dir (Path): The path to the output directory.
+            reprocess: Boolean to force reprocessing
     """
     print('\n' + ROW)
-    print(' \033[36mRunning processing\033[0m '.center(66, '='))
+    print(' \033[36mRunning index calculations\033[0m '.center(66, '='))
     print(ROW + '\n')
 
-    proc_logger = logging.getLogger('pipeline.index_calculations')
     try:
         print('\033[93mRunning index calculation\033[0m')
         print(ROW)
 
-        path_to_code = Path(f'{proc_path}/indicators/')
-
-        config_path = Path(path_to_code/'indicators_config.yaml')
+        config_path = Path(
+            src_path/'processors/indicators/indicators_config.yaml')
         with open(config_path, "r") as stream:
             config = yaml.load(stream, yaml.Loader)
 
-        sys.path.insert(1, str(path_to_code))
+        from processors.indicators.indicators import indicators
 
-        ret_import = importlib.import_module('indicators')
-        ret_import = importlib.reload(ret_import)
+        indicators(config=config, output_path=output_dir,
+                   reprocess=reprocess, log_time=LOG_TIME)
 
-        ret_import.indicators(config=config,
-                              output_path=output_dir,
-                              reprocess=reprocess)
-
-        sys.path.remove(str(path_to_code))
-
-        proc_logger.info('Index calculation complete.')
+        log.info('Index calculation complete.')
         print('\033[92mIndex calculation successful\033[0m')
     except Exception as e:
         print(e)
-        sys.path.remove(str(path_to_code))
-        proc_logger.error('Index calculation failed: %s', e)
+        log.error(f'Index calculation failed: {e}')
         print('\033[91mIndex calculation failed\033[0m')
     print(ROW)
 
@@ -361,9 +355,9 @@ if __name__ == '__main__':
     # path to harvester and preprocessing folders
     pipeline_path = Path(__file__).resolve()
 
-    PATH_TO_HARVESTERS = Path(f'{pipeline_path.parents[1]}/harvesters')
-    PATH_TO_PROCESSORS = Path(f'{pipeline_path.parents[1]}/processors')
     PATH_TO_DATASETS = Path(f'{pipeline_path.parents[2]}/dataset_configs')
+    PATH_TO_SRC = Path(pipeline_path.parents[1])
+    sys.path.insert(1, str(PATH_TO_SRC))
 
     PARSER = create_parser()
     args = PARSER.parse_args()
@@ -384,6 +378,9 @@ if __name__ == '__main__':
         if OUTPUT_DIR == '/':
             print('No output directory given. Exiting.')
             sys.exit()
+        else:
+            logs_path = Path(OUTPUT_DIR / f'logs/{LOG_TIME}')
+            logs_path.mkdir(parents=True, exist_ok=True)
     else:
         if not OUTPUT_DIR.exists():
             print(f'{OUTPUT_DIR} is an invalid output directory. Exiting.')
@@ -395,26 +392,15 @@ if __name__ == '__main__':
 
     # --------------------- Run pipeline ---------------------
 
-    # Initialize logger
-    logger_path = OUTPUT_DIR / 'pipeline.log'
-    logger = logging.getLogger('pipeline')
-    logger.setLevel(logging.DEBUG)
+    # Initialize pipeline log
+    formatter = logging.Formatter(
+        "{'time': '%(asctime)s', 'level': '%(levelname)s', 'message': '%(message)s'}")
 
-    # Setup file handler to output log file
-    fh = logging.FileHandler(logger_path, 'w+')
-    fh.setLevel(logging.DEBUG)
-    fh_formatter = logging.Formatter(
-        "{'name': '%(name)s', 'level': '%(levelname)s', 'message': '%(message)s'}")
-    fh.setFormatter(fh_formatter)
-    logger.addHandler(fh)
+    file_handler = logging.FileHandler(logs_path / 'pipeline.log')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
 
-    # Setup console handler to print to console
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.ERROR)
-    ch_formatter = logging.Formatter(
-        "'%(filename)s':'%(lineno)d,  %(message)s'")
-    ch.setFormatter(ch_formatter)
-    logger.addHandler(ch)
+    log.addHandler(file_handler)
 
     DATASETS = [ds.name for ds in PATH_TO_DATASETS.iterdir()
                 if ds.name != '.DS_Store']
@@ -424,28 +410,26 @@ if __name__ == '__main__':
     # Run all
     if CHOSEN_OPTION == '1':
         for dataset in DATASETS:
-            run_harvester([dataset], PATH_TO_HARVESTERS, OUTPUT_DIR)
-            run_cycle_creation([dataset], PATH_TO_PROCESSORS,
-                               OUTPUT_DIR, REPROCESS)
-
-        run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            run_harvester([dataset], OUTPUT_DIR)
+            run_cycle_creation([dataset], OUTPUT_DIR, REPROCESS)
+        run_cycle_regridding(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
+        run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
 
     # Run harvester
     elif CHOSEN_OPTION == '2':
         for dataset in DATASETS:
-            run_harvester([dataset], PATH_TO_HARVESTERS, OUTPUT_DIR)
+            run_harvester([dataset], OUTPUT_DIR)
 
     # Run processing
     elif CHOSEN_OPTION == '3':
         for dataset in DATASETS:
-            run_cycle_creation([dataset], PATH_TO_PROCESSORS,
-                               OUTPUT_DIR, REPROCESS)
+            run_cycle_creation([dataset], OUTPUT_DIR, REPROCESS)
 
     # Run cycle regridding
     elif CHOSEN_OPTION == '4':
-        run_cycle_regridding(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+        run_cycle_regridding(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
 
-        # run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+        # run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
 
     # Manually enter dataset and pipeline step(s)
     elif CHOSEN_OPTION == '5':
@@ -484,21 +468,19 @@ if __name__ == '__main__':
         wanted_steps = steps_dict[int(steps_index)]
 
         if 'harvest' in wanted_steps:
-            run_harvester([CHOSEN_DS], PATH_TO_HARVESTERS, OUTPUT_DIR)
+            run_harvester([CHOSEN_DS], OUTPUT_DIR)
         if 'create' in wanted_steps:
-            run_cycle_creation(
-                [CHOSEN_DS], PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            run_cycle_creation([CHOSEN_DS], OUTPUT_DIR, REPROCESS)
         if 'regrid' in wanted_steps:
-            run_cycle_regridding(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
-            # run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            run_cycle_regridding(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
+            # run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
         if wanted_steps == 'all':
-            run_harvester([CHOSEN_DS], PATH_TO_HARVESTERS, OUTPUT_DIR)
-            run_cycle_creation(
-                [CHOSEN_DS], PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
-            run_cycle_regridding(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
-            # run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+            run_harvester([CHOSEN_DS], OUTPUT_DIR)
+            run_cycle_creation([CHOSEN_DS], OUTPUT_DIR, REPROCESS)
+            run_cycle_regridding(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
+            # run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
 
     elif CHOSEN_OPTION == '6':
-        run_indexing(PATH_TO_PROCESSORS, OUTPUT_DIR, REPROCESS)
+        run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
 
-    print_log(logger_path)
+    print_log(OUTPUT_DIR)

@@ -1,8 +1,8 @@
 # =====================================================
 # Dataset
 # =====================================================
-ds_name: "ssh_JASON_3_s0-j-rads" # Name for dataset
-version: 2.0
+ds_name: "SARAL" # Name for dataset
+version: 1.0
 processor: along_track
 data_type: along_track
 

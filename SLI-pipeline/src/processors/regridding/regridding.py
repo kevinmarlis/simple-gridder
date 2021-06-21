@@ -19,6 +19,8 @@ from pyresample.kd_tree import resample_gauss
 from pyresample.utils import check_and_wrap
 
 log = logging.getLogger(__name__)
+log.setLevel(logging.ERROR)
+
 warnings.filterwarnings("ignore")
 
 
@@ -132,8 +134,7 @@ def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighb
     mapping_dir = output_dir / 'mappings'
     mapping_dir.mkdir(parents=True, exist_ok=True)
 
-    ref_grids_path = Path().resolve() / 'Sea-Level-Indicators' / \
-        'SLI-pipeline' / 'ref_grds'
+    ref_grids_path = Path().resolve() / 'SLI-pipeline' / 'ref_grds'
 
     global_path = ref_grids_path / 'GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'
     global_ds = xr.open_dataset(global_path)
@@ -217,7 +218,8 @@ def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighb
 
     else:
 
-        instr_in_cycle = [ds.attrs['original_dataset_short_name'] for ds in ats]
+        instr_in_cycle = [ds.attrs['original_dataset_short_name']
+                          for ds in ats]
         global_attrs = cycle_ds.attrs
         for key in [attr for attr in global_attrs.keys() if 'original' in attr]:
             global_attrs.pop(key)
@@ -350,21 +352,34 @@ def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighb
     return regridded_ds
 
 
-def regridding(config, output_dir, reprocess):
+def regridding(config, output_dir, reprocess, log_time):
     """
     """
+    # Set file handler for log using output_path
+    formatter = logging.Formatter('%(asctime)s: %(message)s')
+
+    logs_path = Path(output_dir / f'logs/{log_time}')
+    logs_path.mkdir(parents=True, exist_ok=True)
+
+    file_handler = logging.FileHandler(logs_path / 'regridder.log')
+    file_handler.setLevel(logging.ERROR)
+    file_handler.setFormatter(formatter)
+
+    log.addHandler(file_handler)
 
     date_regex = '%Y-%m-%dT%H:%M:%S'
     version = config['version']
 
+    regridding_status = True
+
     # Query for regridder entry on Solr
-    solr_regridder_doc = solr_query(config, ['type_s:regridder'])
-    if len(solr_regridder_doc) != 0:
-        solr_regridder_doc = solr_regridder_doc[0]
-        previous_time = solr_regridder_doc['modified_time_dt']
-    else:
-        solr_regridder_doc = None
-        previous_time = '1992-01-01'
+    # solr_regridder_doc = solr_query(config, ['type_s:regridder'])
+    # if len(solr_regridder_doc) != 0:
+    #     solr_regridder_doc = solr_regridder_doc[0]
+    #     previous_time = solr_regridder_doc['modified_time_dt']
+    # else:
+    #     solr_regridder_doc = None
+    #     previous_time = '1992-01-01'
 
     # ======================================================
     # Regrid measures cycles
@@ -388,7 +403,7 @@ def regridding(config, output_dir, reprocess):
         cycle = cycle[0]
         # only regrid if cycle was modified
         update = date not in existing_regridded_measures_cycles.keys() or \
-            cycle['processing_time_dt'] > previous_time
+            cycle['processing_time_dt'] > existing_regridded_measures_cycles[date][0]['processing_time_dt']
 
         if update:
             try:
@@ -419,6 +434,7 @@ def regridding(config, output_dir, reprocess):
                 checksum = ''
                 file_size = 0
                 processing_success = False
+                regridding_status = False
 
             item = cycle
             item.pop('id')
@@ -436,7 +452,7 @@ def regridding(config, output_dir, reprocess):
             item['original_data_type_s'] = item.pop('data_type_s')
 
             if date in existing_regridded_measures_cycles.keys():
-                item['id'] = existing_regridded_measures_cycles[date]['id']
+                item['id'] = existing_regridded_measures_cycles[date][0]['id']
 
             resp = solr_update(config, [item])
             if resp.status_code == 200:
@@ -445,7 +461,7 @@ def regridding(config, output_dir, reprocess):
                 print('\tFailed to create Solr cycle documents')
 
         else:
-            print(f'No updates to regridded MEaSUREs cycle {date}')
+            print(f'\tNo updates to regridded MEaSUREs cycle {date}')
 
     # ======================================================
     # Regrid along track cycles
@@ -517,6 +533,7 @@ def regridding(config, output_dir, reprocess):
                 checksum = ''
                 file_size = 0
                 processing_success = False
+                regridding_status = False
 
             item = cycle
             item.pop('id')
@@ -551,18 +568,21 @@ def regridding(config, output_dir, reprocess):
 
     chk_time = datetime.utcnow().strftime(date_regex)
 
-    regridder_meta = {
-        'type_s': 'regridder',
-        'modified_time_dt': chk_time,
-    }
+    # regridder_meta = {
+    #     'type_s': 'regridder',
+    #     'modified_time_dt': chk_time,
+    # }
 
-    if solr_regridder_doc:
-        regridder_meta['id'] = solr_regridder_doc['id']
+    # # if solr_regridder_doc:
+    # #     regridder_meta['id'] = solr_regridder_doc['id']
 
-    # Update Solr with dataset metadata
-    resp = solr_update(config, [regridder_meta])
+    # # Update Solr with dataset metadata
+    # resp = solr_update(config, [regridder_meta])
 
-    if resp.status_code == 200:
-        print('\nSuccessfully created or updated Solr index document')
-    else:
-        print('\nFailed to create or update Solr index document')
+    # if resp.status_code == 200:
+    #     print('\nSuccessfully created or updated Solr index document')
+    # else:
+    #     print('\nFailed to create or update Solr index document')
+
+    if not regridding_status:
+        raise Exception('One or more regriddings failed. Check Solr and logs.')

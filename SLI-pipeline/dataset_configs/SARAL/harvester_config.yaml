@@ -10,11 +10,11 @@ date_regex: "%Y-%m-%dT%H:%M:%SZ" # does not change
 # =====================================================
 # Dataset
 # =====================================================
-ds_name: "ssh_JASON_3_s0-j-rads" # Name for dataset
+ds_name: "SARAL" # Name for dataset
 
 # new_data_attrs:
-original_dataset_title: Jason-3 RADS s0-j-rads
-original_dataset_short_name: JASON_3_s0-j-rads
+original_dataset_title: SARAL
+original_dataset_short_name: SARAL
 original_dataset_url: "N/A"
 original_dataset_reference: "N/A"
 original_dataset_doi: "Not Registered"

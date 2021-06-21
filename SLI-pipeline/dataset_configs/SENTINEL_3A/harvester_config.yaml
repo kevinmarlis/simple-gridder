@@ -2,20 +2,19 @@
 # Harvester
 # =====================================================
 harvester_type: "local"
-
-start: "20160101T00:00:00Z" # yyyymmddThh:mm:ssZ
-end: "20210112T23:59:59Z" # yyyymmddThh:mm:ssZ
+start: "20170101T00:00:00Z" # yyyymmddThh:mm:ssZ
+end: "20181231T23:59:59Z" # yyyymmddThh:mm:ssZ
 most_recent: True # Overrides end date to be current date at time of execution
 date_regex: "%Y-%m-%dT%H:%M:%SZ" # does not change
 
 # =====================================================
 # Dataset
 # =====================================================
-ds_name: "ssh_SENTINEL_3A_s1-rads" # Name for dataset
+ds_name: "SENTINEL_3A" # Name for dataset
 
 # new_data_attrs:
-original_dataset_title: Sentinel-3A RADS s1-rads SSH
-original_dataset_short_name: SENTINEL_3A_s1-rads
+original_dataset_title: SENTINEL 3A
+original_dataset_short_name: SENTINEL 3A
 original_dataset_url: "N/A"
 original_dataset_reference: "N/A"
 original_dataset_doi: "Not Registered"
