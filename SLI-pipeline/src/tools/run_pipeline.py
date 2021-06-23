@@ -263,7 +263,7 @@ def run_cycle_creation(datasets, output_dir, reprocess):
                                     log_time=LOG_TIME)
 
             log.info(f'{ds} cycle creation complete. {status}')
-            print('\033[92mCycle creation successful\033[0m')
+            print('\033[92mCycle creation complete\033[0m')
         except Exception as e:
             print(e)
             log.error(f'{ds} cycle creation failed. {e}')
@@ -299,7 +299,7 @@ def run_cycle_regridding(src_path, output_dir, reprocess):
                    reprocess=reprocess, log_time=LOG_TIME)
 
         log.info('Cycle regridding complete.')
-        print('\033[92mCycle regridding successful\033[0m')
+        print('\033[92mCycle regridding complete\033[0m')
     except Exception as e:
         print(e)
         log.error(f'Cycle regridding failed. {e}')

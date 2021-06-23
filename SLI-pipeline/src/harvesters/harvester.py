@@ -9,6 +9,8 @@ from pathlib import Path
 
 from xml.etree.ElementTree import fromstring
 import requests
+import xarray as xr
+import shutil
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.ERROR)
@@ -267,24 +269,46 @@ def local_harvester(config, docs, target_dir):
 
     entries_for_solr = []
 
-    # Get local files
-    start = start_time[:8]
-    end = end_time[:8]
+    # Move and rename data files that satisfy date range
+    data_dir = Path(f'/Users/marlis/Developer/SLI/Severine Data/{ds_name}')
 
-    data_files = [filepath for filepath in target_dir.rglob("*") if
-                  '.DS_Store' not in filepath.name and
-                  filepath.name[7:15] >= start and
-                  filepath.name[7:15] <= end]
+    data_files = [filepath for filepath in data_dir.rglob("*.nc")]
     data_files.sort()
 
     for filepath in data_files:
-        local_fp = filepath
-        filename = filepath.name
-        date = filename[7:-3]
-        date_start_str = f'{date[:4]}-{date[4:6]}-{date[6:8]}T00:00:00Z'
+        ds = xr.open_dataset(filepath)
+        date = ds.attrs['last_meas_time']
+        file_date = date.replace('-', '').replace(' ', 'T')[:-7] + 'Z'
 
-        mod_time = datetime.fromtimestamp(local_fp.stat().st_mtime)
+        if file_date < start_time or file_date > end_time:
+            continue
+
+        print(f'Moving {file_date}')
+        file_date = file_date.replace(':', '')
+
+        year = date[:4]
+
+        output_dir = target_dir / year
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f'{ds_name}_{file_date}.nc'
+        local_fp = output_dir / filename
+
+        shutil.move(filepath, local_fp)
+
+    data_files = [filepath for filepath in target_dir.rglob("*.nc")]
+    data_files.sort()
+
+    for filepath in data_files:
+        # CRYOSAT_2_20190117T144401Z
+
+        date = filepath.name.split('_')[-1]
+        date_start_str = f'{date[:4]}-{date[4:6]}-{date[6:11]}:{date[11:13]}:{date[13:16]}'
+
+        mod_time = datetime.fromtimestamp(filepath.stat().st_mtime)
         mod_time_string = mod_time.strftime(date_regex)
+
+        filename = filepath.name
 
         # Granule metadata used for Solr granule entries
         item = {
@@ -308,10 +332,10 @@ def local_harvester(config, docs, target_dir):
             print(f' - Adding {filename} to Solr.')
 
             # Create checksum for file
-            item['checksum_s'] = md5(local_fp)
-            item['granule_file_path_s'] = str(local_fp)
+            item['checksum_s'] = md5(filepath)
+            item['granule_file_path_s'] = str(filepath)
             item['harvest_success_b'] = True
-            item['file_size_l'] = local_fp.stat().st_size
+            item['file_size_l'] = filepath.stat().st_size
             item['download_time_dt'] = now_str
 
             entries_for_solr.append(item)

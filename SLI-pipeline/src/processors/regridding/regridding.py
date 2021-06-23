@@ -384,84 +384,84 @@ def regridding(config, output_dir, reprocess, log_time):
     # ======================================================
     # Regrid measures cycles
     # ======================================================
-    print('\nRegridding MEaSUREs cycles\n')
+    # print('\nRegridding MEaSUREs cycles\n')
 
-    existing_regridded_measures_cycles = defaultdict(list)
-    for cycle in solr_query(config, ['type_s:regridded_cycle', 'processing_success_b:true', 'original_data_type_s:gridded']):
-        start_date_key = cycle['start_date_dt'][:10]
-        existing_regridded_measures_cycles[start_date_key].append(cycle)
+    # existing_regridded_measures_cycles = defaultdict(list)
+    # for cycle in solr_query(config, ['type_s:regridded_cycle', 'processing_success_b:true', 'original_data_type_s:gridded']):
+    #     start_date_key = cycle['start_date_dt'][:10]
+    #     existing_regridded_measures_cycles[start_date_key].append(cycle)
 
-    solr_gridded_cycles = solr_query(
-        config, ['type_s:cycle', 'processing_success_b:true', 'data_type_s:gridded'])
+    # solr_gridded_cycles = solr_query(
+    #     config, ['type_s:cycle', 'processing_success_b:true', 'data_type_s:gridded'])
 
-    gridded_cycles = defaultdict(list)
-    for cycle in solr_gridded_cycles:
-        date_key = cycle['start_date_dt'][:10]
-        gridded_cycles[date_key].append(cycle)
+    # gridded_cycles = defaultdict(list)
+    # for cycle in solr_gridded_cycles:
+    #     date_key = cycle['start_date_dt'][:10]
+    #     gridded_cycles[date_key].append(cycle)
 
-    for date, cycle in gridded_cycles.items():
-        cycle = cycle[0]
-        # only regrid if cycle was modified
-        update = date not in existing_regridded_measures_cycles.keys() or \
-            cycle['processing_time_dt'] > existing_regridded_measures_cycles[date][0]['processing_time_dt']
+    # for date, cycle in gridded_cycles.items():
+    #     cycle = cycle[0]
+    #     # only regrid if cycle was modified
+    #     update = date not in existing_regridded_measures_cycles.keys() or \
+    #         cycle['processing_time_dt'] > existing_regridded_measures_cycles[date][0]['processing_time_dt']
 
-        if update:
-            try:
-                print(f'Regridding MEaSUREs cycle {date}')
-                cycle_ds = xr.open_dataset(cycle['filepath_s'])
-                regridded_ds = regridder(cycle_ds, 'gridded', output_dir)
+    #     if update:
+    #         try:
+    #             print(f'Regridding MEaSUREs cycle {date}')
+    #             cycle_ds = xr.open_dataset(cycle['filepath_s'])
+    #             regridded_ds = regridder(cycle_ds, 'gridded', output_dir)
 
-                regrid_dir = output_dir / 'regridded_cycles' / \
-                    'sla_SEA_SURFACE_HEIGHT_ALT_GRIDS_L4_2SATS_5DAY_6THDEG_V_JPL1812'
-                regrid_dir.mkdir(parents=True, exist_ok=True)
+    #             regrid_dir = output_dir / 'regridded_cycles' / \
+    #                 'sla_SEA_SURFACE_HEIGHT_ALT_GRIDS_L4_2SATS_5DAY_6THDEG_V_JPL1812'
+    #             regrid_dir.mkdir(parents=True, exist_ok=True)
 
-                center_date = cycle["center_date_dt"]
+    #             center_date = cycle["center_date_dt"]
 
-                filename = f'ssha_global_half_deg_{center_date[:10].replace("-", "_")}.nc'
-                global_fp = regrid_dir / filename
-                encoding = cycle_ds_encoding(regridded_ds)
+    #             filename = f'ssha_global_half_deg_{center_date[:10].replace("-", "_")}.nc'
+    #             global_fp = regrid_dir / filename
+    #             encoding = cycle_ds_encoding(regridded_ds)
 
-                regridded_ds.to_netcdf(global_fp, encoding=encoding)
+    #             regridded_ds.to_netcdf(global_fp, encoding=encoding)
 
-                # Determine checksum and file size
-                checksum = md5(global_fp)
-                file_size = global_fp.stat().st_size
-                processing_success = True
-            except:
-                log.exception(f'\nError while processing cycle {date}')
-                filename = ''
-                global_fp = ''
-                checksum = ''
-                file_size = 0
-                processing_success = False
-                regridding_status = False
+    #             # Determine checksum and file size
+    #             checksum = md5(global_fp)
+    #             file_size = global_fp.stat().st_size
+    #             processing_success = True
+    #         except:
+    #             log.exception(f'\nError while processing cycle {date}')
+    #             filename = ''
+    #             global_fp = ''
+    #             checksum = ''
+    #             file_size = 0
+    #             processing_success = False
+    #             regridding_status = False
 
-            item = cycle
-            item.pop('id')
-            item.pop('dataset_s')
-            item.pop('_version_')
-            item['type_s'] = 'regridded_cycle'
-            item['filename_s'] = filename
-            item['filepath_s'] = str(global_fp)
-            item['checksum_s'] = checksum
-            item['file_size_l'] = file_size
-            item['processing_success_b'] = processing_success
-            item['processing_time_dt'] = datetime.utcnow().strftime(date_regex)
-            item['processing_version_f'] = version
-            item['checksum_s'] = checksum
-            item['original_data_type_s'] = item.pop('data_type_s')
+    #         item = cycle
+    #         item.pop('id')
+    #         item.pop('dataset_s')
+    #         item.pop('_version_')
+    #         item['type_s'] = 'regridded_cycle'
+    #         item['filename_s'] = filename
+    #         item['filepath_s'] = str(global_fp)
+    #         item['checksum_s'] = checksum
+    #         item['file_size_l'] = file_size
+    #         item['processing_success_b'] = processing_success
+    #         item['processing_time_dt'] = datetime.utcnow().strftime(date_regex)
+    #         item['processing_version_f'] = version
+    #         item['checksum_s'] = checksum
+    #         item['original_data_type_s'] = item.pop('data_type_s')
 
-            if date in existing_regridded_measures_cycles.keys():
-                item['id'] = existing_regridded_measures_cycles[date][0]['id']
+    #         if date in existing_regridded_measures_cycles.keys():
+    #             item['id'] = existing_regridded_measures_cycles[date][0]['id']
 
-            resp = solr_update(config, [item])
-            if resp.status_code == 200:
-                print('\tSuccessfully created or updated Solr cycle documents')
-            else:
-                print('\tFailed to create Solr cycle documents')
+    #         resp = solr_update(config, [item])
+    #         if resp.status_code == 200:
+    #             print('\tSuccessfully created or updated Solr cycle documents')
+    #         else:
+    #             print('\tFailed to create Solr cycle documents')
 
-        else:
-            print(f'\tNo updates to regridded MEaSUREs cycle {date}')
+    #     else:
+    #         print(f'\tNo updates to regridded MEaSUREs cycle {date}')
 
     # ======================================================
     # Regrid along track cycles
@@ -472,117 +472,127 @@ def regridding(config, output_dir, reprocess, log_time):
         start_date_key = cycle['start_date_dt'][:10]
         existing_regridded_at_cycles[start_date_key].append(cycle)
 
-    solr_at_cycles = solr_query(
-        config, ['type_s:cycle', 'processing_success_b:true', 'data_type_s:along_track'])
+    # Iterate through regridding combinations in config YAML
+    for combination in config['combinations']:
+        combo_name = combination['name']
 
-    along_track_cycles = defaultdict(list)
-    for cycle in solr_at_cycles:
-        date_key = cycle['start_date_dt'][:10]
-        along_track_cycles[date_key].append(cycle)
+        instruments = [k for k in combination.keys() if k != 'name']
 
-    # TODO: implement instrument date check by using date ranges in
-    # regridding_config
-    inst_dates = [key for key in config.keys() if 'date_range' in key]
+        cycles_to_regrid = []
 
-    for date, cycles in along_track_cycles.items():
+        # Collect cycles within each instrument's date range
+        for inst in instruments:
+            inst_start = combination[inst][0]
+            inst_start = inst_start + 'T00:00:00Z'
+            inst_end = combination[inst][1]
 
-        cycle = cycles[0]
-
-        instrument_updates = [cycle['processing_time_dt']
-                              > previous_time for cycle in cycles]
-
-        update = date not in existing_regridded_at_cycles.keys() or \
-            sum(instrument_updates) > 0
-
-        if update:
-            try:
-                print(f'Regridding along track cycle {date}')
-                ats = []
-                for cycle_meta in cycles:
-                    ds = xr.open_dataset(cycle_meta['filepath_s'])
-                    ats.append(ds)
-
-                cycle_ds = xr.concat(
-                    ats, 'time')
-                cycle_ds = cycle_ds.sortby('time')
-                cycle = cycle_meta
-
-                cycle_ds = xr.open_dataset(cycle['filepath_s'])
-                regridded_ds = regridder(
-                    cycle_ds, 'along_track', output_dir, ats=ats)
-
-                regrid_dir = output_dir / 'regridded_cycles' / 'along_track'
-                regrid_dir.mkdir(parents=True, exist_ok=True)
-
-                center_date = cycle["center_date_dt"]
-
-                filename = f'ssha_global_half_deg_{center_date[:10].replace("-", "_")}.nc'
-                global_fp = regrid_dir / filename
-                encoding = cycle_ds_encoding(regridded_ds)
-
-                regridded_ds.to_netcdf(global_fp, encoding=encoding)
-
-                # Determine checksum and file size
-                checksum = md5(global_fp)
-                file_size = global_fp.stat().st_size
-                processing_success = True
-            except:
-                log.exception(f'\nError while processing cycle {date}')
-                filename = ''
-                global_fp = ''
-                checksum = ''
-                file_size = 0
-                processing_success = False
-                regridding_status = False
-
-            item = cycle
-            item.pop('id')
-            item.pop('dataset_s')
-            item.pop('_version_')
-            item['type_s'] = 'regridded_cycle'
-            item['filename_s'] = filename
-            item['filepath_s'] = str(global_fp)
-            item['checksum_s'] = checksum
-            item['file_size_l'] = file_size
-            item['processing_success_b'] = processing_success
-            item['processing_time_dt'] = datetime.utcnow().strftime(date_regex)
-            item['processing_version_f'] = version
-            item['checksum_s'] = checksum
-            item['original_data_type_s'] = item.pop('data_type_s')
-
-            if date in existing_regridded_at_cycles.keys():
-                item['id'] = existing_regridded_at_cycles[date]['id']
-
-            resp = solr_update(config, [item])
-            if resp.status_code == 200:
-                print('\tSuccessfully created or updated Solr cycle documents')
+            if inst_end == 'NOW':
+                inst_end = datetime.utcnow().strftime(date_regex)
+                inst_end = inst_end + 'Z'
             else:
-                print('\tFailed to create Solr cycle documents')
+                inst_end = inst_end + 'T00:00:00Z'
 
-        else:
-            print(f'No updates to regridded along track cycle {date}')
+            fq = ['type_s:cycle', 'processing_success_b:true', f'dataset_s:{inst}',
+                  f'center_date_dt:[{inst_start} TO {inst_end}]']
+            cycles_in_range = solr_query(config, fq)
 
-    # ==============================================
-    # Create or update regridder doc on Solr
-    # ==============================================
+            cycles_to_regrid.extend(cycles_in_range)
 
-    chk_time = datetime.utcnow().strftime(date_regex)
+        # Group together cycles across instruments by date
+        along_track_cycles = defaultdict(list)
+        for cycle in cycles_to_regrid:
+            date_key = cycle['start_date_dt'][:10]
+            along_track_cycles[date_key].append(cycle)
 
-    # regridder_meta = {
-    #     'type_s': 'regridder',
-    #     'modified_time_dt': chk_time,
-    # }
+        # Iterate through dates and regrid all cycles that fall on that date
+        for date, cycles in along_track_cycles.items():
 
-    # # if solr_regridder_doc:
-    # #     regridder_meta['id'] = solr_regridder_doc['id']
+            update = False
 
-    # # Update Solr with dataset metadata
-    # resp = solr_update(config, [regridder_meta])
+            fq = ['type_s:regridded_cycle', 'processing_success_b:true',
+                  f'combination_s:{combo_name}', f'start_date_dt:"{cycle["start_date_dt"]}"']
+            solr_combo = solr_query(config, fq)
 
-    # if resp.status_code == 200:
-    #     print('\nSuccessfully created or updated Solr index document')
-    # else:
-    #     print('\nFailed to create or update Solr index document')
+            if len(solr_combo) == 1:
+                solr_proc_date = solr_combo[0]['processing_time_dt']
+
+                if cycle['processing_time_dt'] > solr_proc_date:
+                    update = True
+            else:
+                update = True
+
+            if update:
+                try:
+                    print(
+                        f'Regridding {combo_name} along track cycle {date}')
+                    ats = []
+                    for cycle_meta in cycles:
+                        ds = xr.open_dataset(cycle_meta['filepath_s'])
+                        ats.append(ds)
+
+                    cycle_ds = xr.concat(ats, 'time')
+                    cycle_ds = cycle_ds.sortby('time')
+                    cycle = cycle_meta
+
+                    cycle_ds = xr.open_dataset(cycle['filepath_s'])
+                    regridded_ds = regridder(
+                        cycle_ds, 'along_track', output_dir, ats=ats)
+
+                    regrid_dir = output_dir / \
+                        f'regridded_cycles/along_track/{combo_name}'
+                    regrid_dir.mkdir(parents=True, exist_ok=True)
+
+                    center_date = cycle["center_date_dt"]
+
+                    filename = f'ssha_global_half_deg_{center_date[:10].replace("-", "_")}.nc'
+                    global_fp = regrid_dir / filename
+                    encoding = cycle_ds_encoding(regridded_ds)
+
+                    regridded_ds.to_netcdf(global_fp, encoding=encoding)
+
+                    # Determine checksum and file size
+                    checksum = md5(global_fp)
+                    file_size = global_fp.stat().st_size
+                    processing_success = True
+                except:
+                    log.exception(f'\nError while processing cycle {date}')
+                    filename = ''
+                    global_fp = ''
+                    checksum = ''
+                    file_size = 0
+                    processing_success = False
+                    regridding_status = False
+
+                item = cycle
+                item.pop('id')
+                item.pop('dataset_s')
+                item.pop('_version_')
+                item['type_s'] = 'regridded_cycle'
+                item['combination_s'] = combo_name
+                item['filename_s'] = filename
+                item['filepath_s'] = str(global_fp)
+                item['checksum_s'] = checksum
+                item['file_size_l'] = file_size
+                item['processing_success_b'] = processing_success
+                item['processing_time_dt'] = datetime.utcnow().strftime(
+                    date_regex)
+                item['processing_version_f'] = version
+                item['checksum_s'] = checksum
+                item['original_data_type_s'] = item.pop('data_type_s')
+
+                if date in existing_regridded_at_cycles.keys():
+                    item['id'] = existing_regridded_at_cycles[date]['id']
+
+                resp = solr_update(config, [item])
+                if resp.status_code == 200:
+                    print(
+                        '\tSuccessfully created or updated Solr cycle documents')
+                else:
+                    print('\tFailed to create Solr cycle documents')
+
+            else:
+                print(
+                    f'No updates to {combo_name} regridded along track cycle for {date}')
 
     if not regridding_status:
         raise Exception('One or more regriddings failed. Check Solr and logs.')

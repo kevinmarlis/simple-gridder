@@ -15,8 +15,8 @@ import pyresample as pr
 from netCDF4 import default_fillvals  # pylint: disable=no-name-in-module
 from pyresample.utils import check_and_wrap
 
-warnings.filterwarnings("ignore")
-
+# warnings.filterwarnings("ignore")
+warnings.simplefilter("ignore")
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.ERROR)
@@ -99,44 +99,70 @@ def process_along_track(cycle_granules, ds_meta, dates):
         cycle_ds (Dataset): the processed cycle Dataset object
         len(granules) (int): the number of granules within the processed cycle Dataset object
     """
-    var = 'ssh_smoothed'
     reference_date = datetime(1985, 1, 1, 0, 0, 0)
     granules = []
     data_start_time = None
     data_end_time = None
+    uses_groups = False
 
     for granule in cycle_granules:
-        ds = xr.open_dataset(granule['granule_file_path_s'], group='data')
 
-        if 'gmss' in ds.data_vars:
-            ds = ds.drop(['gmss'])
-            ds = ds.swap_dims({'phony_dim_2': 'time'})
+        if uses_groups:
+            ds = xr.open_dataset(granule['granule_file_path_s'], group='data')
 
+            if 'gmss' in ds.data_vars:
+                ds = ds.drop(['gmss'])
+                ds = ds.swap_dims({'phony_dim_2': 'time'})
+
+            else:
+                ds = ds.swap_dims({'phony_dim_1': 'time'})
+
+            ds = ds.rename_vars({'ssh_smoothed': 'SSHA'})
+            ds = ds.rename({'lats': 'latitude', 'lons': 'longitude'})
+
+            ds = ds.drop([var for var in ds.data_vars if var[0] == '_'])
+            ds = ds.drop_vars(['ssh', 'sat_id', 'sea_ice', 'track_id'])
+            ds = ds.assign_coords(time=('time', ds.time))
+            ds = ds.assign_coords(latitude=ds.latitude)
+            ds = ds.assign_coords(longitude=ds.longitude)
+
+            ds.time.attrs['long_name'] = 'time'
+            ds.time.attrs['standard_name'] = 'time'
+            adjusted_times = [reference_date +
+                              timedelta(seconds=time) for time in ds.time.values]
+            ds = ds.assign_coords(time=adjusted_times)
+
+            data_start_time = min(
+                data_start_time, ds.time.values[0]) if data_start_time else ds.time.values[0]
+            data_end_time = max(
+                data_end_time, ds.time.values[-1]) if data_end_time else ds.time.values[-1]
         else:
-            ds = ds.swap_dims({'phony_dim_1': 'time'})
+            ds = xr.open_dataset(granule['granule_file_path_s'])
 
-        ds = ds.rename_vars({var: 'SSHA'})
-        ds = ds.rename({'lats': 'latitude', 'lons': 'longitude'})
+            ds = ds.rename_vars({'sla': 'SSHA'})
+            ds = ds.rename({'lat': 'latitude', 'lon': 'longitude'})
 
-        ds = ds.drop([var for var in ds.data_vars if var[0] == '_'])
-        ds = ds.drop_vars(['ssh', 'sat_id', 'sea_ice', 'track_id'])
-        ds = ds.assign_coords(time=('time', ds.time))
-        ds = ds.assign_coords(latitude=ds.latitude)
-        ds = ds.assign_coords(longitude=ds.longitude)
+            ds = ds.assign_coords(latitude=ds.latitude)
+            ds = ds.assign_coords(longitude=ds.longitude)
 
-        ds.time.attrs['long_name'] = 'time'
-        ds.time.attrs['standard_name'] = 'time'
-        adjusted_times = [reference_date +
-                          timedelta(seconds=time) for time in ds.time.values]
-        ds = ds.assign_coords(time=adjusted_times)
+            eq_dt = datetime.strptime(
+                ds.attrs['equator_time'], '%Y-%m-%d %H:%M:%S.%f')
 
-        data_start_time = min(
-            data_start_time, ds.time.values[0]) if data_start_time else ds.time.values[0]
-        data_end_time = max(
-            data_end_time, ds.time.values[-1]) if data_end_time else ds.time.values[-1]
+            adjusted_times = [eq_dt + timedelta(seconds=time)
+                              for time in ds.time_rel_eq.values]
+            ds = ds.assign_coords(time=('time', adjusted_times))
+
+            data_start_time = min(
+                data_start_time, ds.time.values[0]) if data_start_time else ds.time.values[0]
+            data_end_time = max(
+                data_end_time, ds.time.values[-1]) if data_end_time else ds.time.values[-1]
+
+            ds = ds.drop([var for var in ds.data_vars if var not in [
+                         'latitude', 'longitude', 'SSHA']])
 
         granules.append(ds)
 
+    print('\tMerging granules...')
     # Merge opened granules if needed
     cycle_ds = xr.concat((granules), dim='time') if len(
         granules) > 1 else granules[0]
