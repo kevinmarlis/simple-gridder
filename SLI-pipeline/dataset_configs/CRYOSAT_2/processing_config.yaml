@@ -3,6 +3,7 @@
 # =====================================================
 ds_name: "CRYOSAT_2" # Name for dataset
 version: 1.0
+cycle_length: 30
 processor: along_track
 data_type: along_track
 

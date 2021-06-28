@@ -85,7 +85,7 @@ def solr_update(config, update_body):
     return requests.post(url, json=update_body)
 
 
-def process_along_track(cycle_granules, ds_meta, dates):
+def process_along_track(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
     """
     Processes and aggregates individual granules that fall within a cycle's date range for
     a non GPS along track dataset.
@@ -182,6 +182,7 @@ def process_along_track(cycle_granules, ds_meta, dates):
     # Global Attributes
     cycle_ds.attrs = {
         'title': 'Sea Level Anormaly Estimate based on Altimeter Data',
+        'cycle_length': CYCLE_LENGTH,
         'cycle_start': dates[0],
         'cycle_center': dates[1],
         'cycle_end': dates[2],
@@ -197,7 +198,7 @@ def process_along_track(cycle_granules, ds_meta, dates):
     return cycle_ds, len(granules)
 
 
-def process_measures_grids(cycle_granules, ds_meta, dates):
+def process_measures_grids(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
     """
     Processes and aggregates individual granules that fall within a cycle's date range for
     measures grids datasets (1812).
@@ -234,6 +235,7 @@ def process_measures_grids(cycle_granules, ds_meta, dates):
     # Global attributes
     cycle_ds.attrs = {
         'title': 'Sea Level Anormaly Estimate based on Altimeter Data',
+        'cycle_length': CYCLE_LENGTH,
         'cycle_start': dates[0],
         'cycle_center': dates[1],
         'cycle_end': dates[2],
@@ -573,10 +575,7 @@ def cycle_creation(config, output_path, reprocess, log_time):
     data_type = config['data_type']
     date_regex = '%Y-%m-%dT%H:%M:%S'
 
-    if '1812' in ds_name:
-        CYCLE_LENGTH = 5
-    else:
-        CYCLE_LENGTH = 10
+    CYCLE_LENGTH = config['cycle_length']
 
     # Query for dataset metadata
     try:
@@ -653,11 +652,13 @@ def cycle_creation(config, output_path, reprocess, log_time):
                 if processor == 'along_track':
                     cycle_ds, granule_count = process_along_track(cycle_granules,
                                                                   ds_metadata,
-                                                                  date_strs)
+                                                                  date_strs,
+                                                                  CYCLE_LENGTH)
                 elif processor == 'measures_grids':
                     cycle_ds, granule_count = process_measures_grids(cycle_granules,
                                                                      ds_metadata,
-                                                                     date_strs)
+                                                                     date_strs,
+                                                                     CYCLE_LENGTH)
 
                 # Create netcdf encoding for cycle
                 encoding = cycle_ds_encoding(cycle_ds, ds_name, center_date)
@@ -695,6 +696,7 @@ def cycle_creation(config, output_path, reprocess, log_time):
                 'center_date_dt': center_date_str,
                 'end_date_dt': end_date_str,
                 'granules_in_cycle_i': granule_count,
+                'cycle_length_i': CYCLE_LENGTH,
                 'filename_s': filename,
                 'filepath_s': str(save_path),
                 'checksum_s': checksum,

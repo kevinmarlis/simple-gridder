@@ -253,6 +253,8 @@ def indicators(config, output_path, reprocess, log_time):
         indicator_metadata = indicator_query[0]
         modified_time = indicator_metadata['modified_time_dt']
 
+    # QUERY WILL NEED TO DEFINE WHICH REGRIDDED COMBINATION TO USE. PROBABLY IN YAML BUT WILL NEED TO UPDATE BELOW QUERIES
+
     # Query for update cycles after modified_time
     # TODO: Modify to select gridded data when available
     fq = ['type_s:regridded_cycle', 'processing_success_b:true',

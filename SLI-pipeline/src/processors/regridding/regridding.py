@@ -257,9 +257,9 @@ def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighb
                 ssha_grid = pr.geometry.SwathDefinition(
                     lons=tmp_ssha_lons, lats=tmp_ssha_lats)
 
-                roi = 2e5
+                roi = 3e5  # 6e5
                 sigma = 1e5
-                neighbours = 25
+                neighbours = 100  # 500
 
                 new_vals = resample_gauss(ssha_grid, ssha_nn,
                                           global_swath_def,
@@ -467,10 +467,6 @@ def regridding(config, output_dir, reprocess, log_time):
     # Regrid along track cycles
     # ======================================================
     print('\nRegridding along track cycles\n')
-    existing_regridded_at_cycles = defaultdict(list)
-    for cycle in solr_query(config, ['type_s:regridded_cycle', 'processing_success_b:true', 'original_data_type_s:along_track']):
-        start_date_key = cycle['start_date_dt'][:10]
-        existing_regridded_at_cycles[start_date_key].append(cycle)
 
     # Iterate through regridding combinations in config YAML
     for combination in config['combinations']:
@@ -480,17 +476,29 @@ def regridding(config, output_dir, reprocess, log_time):
 
         cycles_to_regrid = []
 
+        existing_regridded_at_cycles = defaultdict(list)
+        for cycle in solr_query(config, ['type_s:regridded_cycle',
+                                         'original_data_type_s:along_track',
+                                         f'combination_s:{combo_name}']):
+            start_date_key = cycle['start_date_dt'][:10]
+            existing_regridded_at_cycles[start_date_key].append(cycle)
+
         # Collect cycles within each instrument's date range
         for inst in instruments:
             inst_start = combination[inst][0]
-            inst_start = inst_start + 'T00:00:00Z'
+
+            if inst_start == 'EARLIEST':
+                inst_start = '1970-01-01'
+
+            inst_start += 'T00:00:00Z'
+
             inst_end = combination[inst][1]
 
             if inst_end == 'NOW':
                 inst_end = datetime.utcnow().strftime(date_regex)
-                inst_end = inst_end + 'Z'
+                inst_end += 'Z'
             else:
-                inst_end = inst_end + 'T00:00:00Z'
+                inst_end += 'T00:00:00Z'
 
             fq = ['type_s:cycle', 'processing_success_b:true', f'dataset_s:{inst}',
                   f'center_date_dt:[{inst_start} TO {inst_end}]']
@@ -504,37 +512,49 @@ def regridding(config, output_dir, reprocess, log_time):
             date_key = cycle['start_date_dt'][:10]
             along_track_cycles[date_key].append(cycle)
 
-        # Iterate through dates and regrid all cycles that fall on that date
-        for date, cycles in along_track_cycles.items():
+        dates = list(along_track_cycles.keys())
+        dates.sort()
 
+        # Iterate through dates and regrid all cycles that fall on that date
+        for date in dates:
+            cycles = along_track_cycles[date]
             update = False
 
-            fq = ['type_s:regridded_cycle', 'processing_success_b:true',
-                  f'combination_s:{combo_name}', f'start_date_dt:"{cycle["start_date_dt"]}"']
-            solr_combo = solr_query(config, fq)
+            for cycle in cycles:
+                fq = ['type_s:regridded_cycle',
+                      f'combination_s:{combo_name}', f'start_date_dt:"{cycle["start_date_dt"]}"']
+                solr_combo = solr_query(config, fq)
 
-            if len(solr_combo) == 1:
-                solr_proc_date = solr_combo[0]['processing_time_dt']
+                if len(solr_combo) == 1:
+                    solr_proc_date = solr_combo[0]['processing_time_dt']
 
-                if cycle['processing_time_dt'] > solr_proc_date:
+                    if cycle['processing_time_dt'] > solr_proc_date or cycle['processing_success_b'] == 'false':
+                        update = True
+                        break
+                else:
                     update = True
-            else:
-                update = True
+                    break
 
             if update:
                 try:
                     print(
                         f'Regridding {combo_name} along track cycle {date}')
+
                     ats = []
-                    for cycle_meta in cycles:
-                        ds = xr.open_dataset(cycle_meta['filepath_s'])
-                        ats.append(ds)
 
-                    cycle_ds = xr.concat(ats, 'time')
-                    cycle_ds = cycle_ds.sortby('time')
-                    cycle = cycle_meta
+                    if len(cycles) == 1:
+                        cycle = cycles[0]
+                        cycle_ds = xr.open_dataset(cycle['filepath_s'])
+                        ats.append(cycle_ds)
+                    else:
+                        for cycle_meta in cycles:
+                            ds = xr.open_dataset(cycle_meta['filepath_s'])
+                            ats.append(ds)
 
-                    cycle_ds = xr.open_dataset(cycle['filepath_s'])
+                        cycle_ds = xr.concat(ats, 'time')
+                        cycle_ds = cycle_ds.sortby('time')
+                        cycle = cycle_meta
+
                     regridded_ds = regridder(
                         cycle_ds, 'along_track', output_dir, ats=ats)
 
@@ -543,7 +563,6 @@ def regridding(config, output_dir, reprocess, log_time):
                     regrid_dir.mkdir(parents=True, exist_ok=True)
 
                     center_date = cycle["center_date_dt"]
-
                     filename = f'ssha_global_half_deg_{center_date[:10].replace("-", "_")}.nc'
                     global_fp = regrid_dir / filename
                     encoding = cycle_ds_encoding(regridded_ds)
@@ -563,12 +582,14 @@ def regridding(config, output_dir, reprocess, log_time):
                     processing_success = False
                     regridding_status = False
 
-                item = cycle
-                item.pop('id')
-                item.pop('dataset_s')
-                item.pop('_version_')
+                item = {}
                 item['type_s'] = 'regridded_cycle'
                 item['combination_s'] = combo_name
+                item['start_date_dt'] = cycle['start_date_dt']
+                item['center_date_dt'] = cycle['center_date_dt']
+                item['end_date_dt'] = cycle['end_date_dt']
+                item['granules_in_cycle_i'] = cycle['granules_in_cycle_i']
+                item['cycle_length_i'] = cycle['cycle_length_i']
                 item['filename_s'] = filename
                 item['filepath_s'] = str(global_fp)
                 item['checksum_s'] = checksum
@@ -577,12 +598,10 @@ def regridding(config, output_dir, reprocess, log_time):
                 item['processing_time_dt'] = datetime.utcnow().strftime(
                     date_regex)
                 item['processing_version_f'] = version
-                item['checksum_s'] = checksum
-                item['original_data_type_s'] = item.pop('data_type_s')
+                item['original_data_type_s'] = cycle['data_type_s']
 
                 if date in existing_regridded_at_cycles.keys():
                     item['id'] = existing_regridded_at_cycles[date]['id']
-
                 resp = solr_update(config, [item])
                 if resp.status_code == 200:
                     print(

@@ -113,7 +113,7 @@ def show_menu():
         print('1) Harvest and process all datasets')
         print('2) Harvest all datasets')
         print('3) Update cycles for all datasets')
-        print('4) Regrid cycles for all datasets')
+        print('4) Regrid all cycle combinations')
         print('5) Dataset input')
         print('6) Calculate index values')
         selection = input('Enter option number: ')

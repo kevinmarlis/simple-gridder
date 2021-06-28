@@ -8,10 +8,15 @@ version: 1.0
 # =====================================================
 # Here, you can dictate which instruments will be combined
 # into a single along track cycle.
+
+# Can use keywords:
+#   - 'EARLIEST' - start at earliest cycle in Solr
+#   - 'NOW' - current date
+
 # ex:
 #   - name: 'COMBINATION_1'
-#     CRYOSAT_2: ['2017-01-01', '2021-12-31']
-#     JASON_3: ['2017-01-01', '2021-12-31']
+#     CRYOSAT_2: ['EARLIEST', '2015-12-31']
+#     JASON_3: ['2016-01-01', 'NOW']
 #   - name: 'COMBINATION_2'
 #     SENTINEL_3A: ['2017-01-01', '2021-12-31']
 #     SENTINEL_3B: ['2017-01-01', '2021-12-31']
@@ -19,9 +24,21 @@ version: 1.0
 
 combinations:
   - name: 'CRYOSAT_2'
-    CRYOSAT_2: ['2017-01-01', 'NOW']
-
-
+    CRYOSAT_2: ['EARLIEST', 'NOW']
+  - name: 'ENVISAT_1'
+    ENVISAT_1: ['EARLIEST', 'NOW']
+  - name: 'ERS_1'
+    ERS_1: ['EARLIEST', 'NOW']
+  - name: 'ERS_2'
+    ERS_2: ['EARLIEST', 'NOW']
+  - name: 'JASON_3'
+    JASON_3: ['EARLIEST', 'NOW']
+  - name: 'SARAL'
+    SARAL: ['EARLIEST', 'NOW']
+  - name: 'SENTINEL_3A'
+    SENTINEL_3A: ['EARLIEST', 'NOW']
+  - name: 'SENTINEL_3B'
+    SENTINEL_3B: ['EARLIEST', 'NOW']
 
 # =====================================================
 # Solr
