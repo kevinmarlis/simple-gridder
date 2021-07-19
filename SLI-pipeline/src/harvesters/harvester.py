@@ -1,16 +1,18 @@
 """
-This module handles data granule harvesting for datasets hosted locally and on PODAAC. 
+This module handles data granule harvesting for datasets hosted locally and on PODAAC.
 """
 
 import hashlib
 import logging
 from datetime import datetime
 from pathlib import Path
-
+import yaml
 from xml.etree.ElementTree import fromstring
 import requests
 import xarray as xr
 import shutil
+from webdav3.client import Client
+
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.ERROR)
@@ -243,6 +245,143 @@ def podaac_harvester(config, docs, target_dir):
     return entries_for_solr, url_base
 
 
+def podaac_drive_harvester(config, docs, target_dir):
+    """
+    Harvests new or updated granules from PODAAC for a specific dataset, within a
+    specific date range. Creates new or modifies granule docs for each harvested granule.
+
+    Params:
+        config (dict): the dataset specific config file
+        docs (dict): the existing granule docs on Solr in dict format
+        target_dir (Path): the path of the dataset's harvested granules directory
+
+    Returns:
+        entries_for_solr (List[dict]): all new or modified granule docs to be posted to Solr
+        source (str): PODAAC Restricted Drive url for the specific dataset
+    """
+    ds_name = config['ds_name']
+    webdav_ds_name = ds_name.lower().replace('_', '-') + '/'
+
+    now = datetime.utcnow()
+    date_regex = config['date_regex']
+    start_time = config['start']
+    end_time = now.strftime(
+        "%Y%m%dT%H:%M:%SZ") if config['most_recent'] else config['end']
+
+    entries_for_solr = []
+
+    with open(Path(f'{Path(__file__).resolve().parent}/earthdata_login.yaml'), "r") as stream:
+        earthdata_login = yaml.load(stream, yaml.Loader)
+
+    webdav_options = {
+        'webdav_hostname': 'https://podaac-tools.jpl.nasa.gov/drive-r/files/merged_alt/shared/L2/int',
+        'webdav_login': earthdata_login['user'],
+        'webdav_password': earthdata_login['password'],
+        'disable_check': True
+    }
+
+    client = Client(webdav_options)
+
+    ds_years = client.list(webdav_ds_name)[1:]
+
+    def date_filter(f):
+        date = f['path'].split('_')[-1].split('.')[0][3:]
+        start = start_time[:8]
+        end = end_time[:8]
+        if date >= start and date <= end:
+            return True
+        else:
+            return False
+
+    for year in ds_years:
+        files = client.list(f'{webdav_ds_name}/{year}', get_info=True)[1:]
+        files = [f for f in files if 'md5' not in f['path']]
+        files = filter(date_filter, files)
+
+        for f in files:
+            updating = False
+
+            pod_name = f['path'].split('/')[-1]
+            filename = f['path'].split('_')[-1]
+            f_path = f'{webdav_ds_name}{year}{pod_name}'
+            source = webdav_options['webdav_hostname'] + '/' + f_path
+
+            date = filename.split('.')[0][3:]
+            date_start_str = f'{date[:4]}-{date[4:6]}-{date[6:8]}T00:00:00Z'
+
+            datetime_modified = datetime.strptime(
+                f['modified'], '%a, %d %b %Y %H:%M:%S %Z')
+            mod_time_str = datetime.strftime(
+                datetime_modified, '%Y-%m-%dT%H:%M:%SZ')
+
+            # Granule metadata used for Solr granule entries
+            item = {
+                'type_s': 'granule',
+                'date_dt': date_start_str,
+                'dataset_s': ds_name,
+                'filename_s': filename,
+                'source_s': source,
+                'modified_time_dt': mod_time_str
+            }
+
+            if filename in docs.keys():
+                item['id'] = docs[filename]['id']
+
+            local_dir = (target_dir / date_start_str[:4])
+            local_dir.mkdir(parents=True, exist_ok=True)
+            local_fp = local_dir / filename
+
+            updating = (filename not in docs.keys()) or \
+                (not docs[filename]['harvest_success_b']) or \
+                (docs[filename]['download_time_dt'] <= mod_time_str) or \
+                (not local_fp.exists())
+
+            if updating:
+                try:
+                    expected_size = f['size']
+
+                    # Only redownloads if local file is out of town - doesn't waste
+                    # time/bandwidth to redownload the same file just because there isn't
+                    # a Solr entry. Most useful during development.
+                    if not local_fp.exists() or mod_time_str > datetime.fromtimestamp(local_fp.stat().st_mtime).strftime(date_regex):
+                        print(f' - Downloading {filename} to {local_fp}')
+
+                        client.download_sync(remote_path=f_path,
+                                             local_path=local_fp)
+                    else:
+                        print(
+                            f' - {filename} already downloaded, but not in Solr.')
+
+                    # Create checksum for file
+                    item['checksum_s'] = md5(local_fp)
+                    item['granule_file_path_s'] = str(local_fp)
+                    item['file_size_l'] = local_fp.stat().st_size
+
+                    # Make sure file properly downloaded by comparing sizes
+                    if int(expected_size) == item['file_size_l']:
+                        item['harvest_success_b'] = True
+                    else:
+                        item['harvest_success_b'] = False
+
+                except:
+                    log.exception(
+                        f'{ds_name} harvesting error! {filename} failed to download')
+
+                    item['harvest_success_b'] = False
+                    item['checksum_s'] = ''
+                    item['granule_file_path_s'] = ''
+                    item['file_size_l'] = 0
+
+                item['download_time_dt'] = now.strftime(date_regex)
+                entries_for_solr.append(item)
+
+            else:
+                print(
+                    f' - {filename} already downloaded, and up to date in Solr.')
+
+    return entries_for_solr, f'{webdav_options["webdav_hostname"]}/{webdav_ds_name}'
+
+
 def local_harvester(config, docs, target_dir):
     """
     Harvests new or updated granules from a local drive for a specific dataset, within a
@@ -277,8 +416,14 @@ def local_harvester(config, docs, target_dir):
 
     for filepath in data_files:
         ds = xr.open_dataset(filepath)
-        date = ds.attrs['last_meas_time']
-        file_date = date.replace('-', '').replace(' ', 'T')[:-7] + 'Z'
+
+        if ds_name == 'GSFC':
+            date = ds.attrs['time_coverage_end']
+            file_date = date.replace('-', '').replace(':', '')[:-2] + 'Z'
+
+        else:
+            date = ds.attrs['last_meas_time']
+            file_date = date.replace('-', '').replace(' ', 'T')[:-7] + 'Z'
 
         if file_date < start_time or file_date > end_time:
             continue
@@ -325,8 +470,8 @@ def local_harvester(config, docs, target_dir):
 
         # If granule doesn't exist or previously failed or has been updated since last harvest
         updating = (filename not in docs.keys()) or \
-                   (not docs[filename]['harvest_success_b']) or \
-                   (docs[filename]['download_time_dt'] <= mod_time_string)
+            (not docs[filename]['harvest_success_b']) or \
+            (docs[filename]['download_time_dt'] <= mod_time_string)
 
         if updating:
             print(f' - Adding {filename} to Solr.')
@@ -399,6 +544,9 @@ def harvester(config, output_path, log_time):
     # Actual downloading and generation of granule docs for Solr
     if config['harvester_type'] == 'podaac':
         entries_for_solr, source = podaac_harvester(config, docs, target_dir)
+    elif config['harvester_type'] == 'PODAAC Drive':
+        entries_for_solr, source = podaac_drive_harvester(
+            config, docs, target_dir)
     elif config['harvester_type'] == 'local':
         entries_for_solr, source = local_harvester(config, docs, target_dir)
 

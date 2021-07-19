@@ -1,7 +1,7 @@
 # =====================================================
 # Harvester
 # =====================================================
-harvester_type: "local"
+harvester_type: "PODAAC Drive"
 start: "20130101T00:00:00Z" # yyyymmddThh:mm:ssZ
 end: "20181231T23:59:59Z" # yyyymmddThh:mm:ssZ
 most_recent: True # Overrides end date to be current date at time of execution
