@@ -99,66 +99,57 @@ def process_along_track(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
         cycle_ds (Dataset): the processed cycle Dataset object
         len(granules) (int): the number of granules within the processed cycle Dataset object
     """
-    reference_date = datetime(1985, 1, 1, 0, 0, 0)
     granules = []
-    data_start_time = None
-    data_end_time = None
-    uses_groups = False
 
     for granule in cycle_granules:
-
-        if uses_groups:
+        # along track data is in hdf5 format and uses groups
+        try:
             ds = xr.open_dataset(granule['granule_file_path_s'], group='data')
+            ds = ds.rename(
+                {'lats': 'latitude', 'lons': 'longitude', 'ssh': 'SSHA'})
+            ds = ds[['SSHA', 'latitude', 'longitude', 'time']]
+            dim = ds.SSHA.dims[0]
+            ds = ds.swap_dims({dim: 'time'})
 
-            if 'gmss' in ds.data_vars:
-                ds = ds.drop(['gmss'])
-                ds = ds.swap_dims({'phony_dim_2': 'time'})
+            ds.time.attrs = {
+                'long_name': 'time',
+                'standard_name': 'time',
+                'units': 'seconds since 1985-01-01',
+                'calendar': 'gregorian',
+            }
 
-            else:
-                ds = ds.swap_dims({'phony_dim_1': 'time'})
-
-            ds = ds.rename_vars({'ssh_smoothed': 'SSHA'})
-            ds = ds.rename({'lats': 'latitude', 'lons': 'longitude'})
-
-            ds = ds.drop([var for var in ds.data_vars if var[0] == '_'])
-            ds = ds.drop_vars(['ssh', 'sat_id', 'sea_ice', 'track_id'])
-            ds = ds.assign_coords(time=('time', ds.time))
-            ds = ds.assign_coords(latitude=ds.latitude)
-            ds = ds.assign_coords(longitude=ds.longitude)
-
-            ds.time.attrs['long_name'] = 'time'
-            ds.time.attrs['standard_name'] = 'time'
-            adjusted_times = [reference_date +
-                              timedelta(seconds=time) for time in ds.time.values]
-            ds = ds.assign_coords(time=adjusted_times)
-
-            data_start_time = min(
-                data_start_time, ds.time.values[0]) if data_start_time else ds.time.values[0]
-            data_end_time = max(
-                data_end_time, ds.time.values[-1]) if data_end_time else ds.time.values[-1]
-        else:
+        # GSFC data is in netcdf format and doesn't use groups
+        except:
             ds = xr.open_dataset(granule['granule_file_path_s'])
 
-            ds = ds.rename_vars({'sla': 'SSHA'})
-            ds = ds.rename({'lat': 'latitude', 'lon': 'longitude'})
+            ds = ds.rename(
+                {'lat': 'latitude', 'lon': 'longitude', 'ssha': 'SSHA'})
+            ds = ds[['SSHA', 'latitude', 'longitude', 'time']]
+            ds = ds.swap_dims({'N_Records': 'time'})
+            ds['SSHA'] = ds['SSHA'] / 1e3
 
-            ds = ds.assign_coords(latitude=ds.latitude)
-            ds = ds.assign_coords(longitude=ds.longitude)
+        ds.latitude.attrs = {
+            'long_name': 'latitude',
+            'standard_name': 'latitude',
+            'units': 'degrees_north',
+            'comment': 'Positive latitude is North latitude, negative latitude is South latitude. FillValue pads the reference orbits to have same length'
+        }
 
-            eq_dt = datetime.strptime(
-                ds.attrs['equator_time'], '%Y-%m-%d %H:%M:%S.%f')
+        ds.longitude.attrs = {
+            'long_name': 'longitude',
+            'standard_name': 'longitude',
+            'units': 'degrees_east',
+            'comment': 'East longitude relative to Greenwich meridian. FillValue pads the reference orbits to have same length'
+        }
 
-            adjusted_times = [eq_dt + timedelta(seconds=time)
-                              for time in ds.time_rel_eq.values]
-            ds = ds.assign_coords(time=('time', adjusted_times))
-
-            data_start_time = min(
-                data_start_time, ds.time.values[0]) if data_start_time else ds.time.values[0]
-            data_end_time = max(
-                data_end_time, ds.time.values[-1]) if data_end_time else ds.time.values[-1]
-
-            ds = ds.drop([var for var in ds.data_vars if var not in [
-                         'latitude', 'longitude', 'SSHA']])
+        ds.SSHA.attrs = {
+            'long_name': 'sea surface height anomaly',
+            'standard_name': 'sea_surface_height_above_sea_level',
+            'units': 'm',
+            'valid_min': np.nanmin(ds.SSHA.values),
+            'valid_max': np.nanmax(ds.SSHA.values),
+            'comment': 'Sea level determined from satellite altitude - range - all altimetric corrections',
+        }
 
         granules.append(ds)
 
@@ -167,28 +158,15 @@ def process_along_track(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
     cycle_ds = xr.concat((granules), dim='time') if len(
         granules) > 1 else granules[0]
 
-    # Time bounds
-
-    # Center time
-    data_center_time = data_start_time + ((data_end_time - data_start_time)/2)
-
-    # Var Attributes
-    cycle_ds['SSHA'].attrs['valid_min'] = np.nanmin(cycle_ds['SSHA'].values)
-    cycle_ds['SSHA'].attrs['valid_max'] = np.nanmax(cycle_ds['SSHA'].values)
-
-    # Time Attributes
-    cycle_ds.time.attrs['long_name'] = 'time'
-
     # Global Attributes
     cycle_ds.attrs = {
-        'title': 'Sea Level Anormaly Estimate based on Altimeter Data',
+        'title': 'Sea Surface Height Anormaly Estimate based on Altimeter Data',
+        'comment': f'Data aggregated into {CYCLE_LENGTH} day cycle periods.',
+        'cycle_period': f'{dates[0]} to {dates[2]}',
         'cycle_length': CYCLE_LENGTH,
         'cycle_start': dates[0],
         'cycle_center': dates[1],
         'cycle_end': dates[2],
-        'data_time_start': str(data_start_time)[:19],
-        'data_time_center': str(data_center_time)[:19],
-        'data_time_end': str(data_end_time)[:19],
         'original_dataset_title': ds_meta['original_dataset_title_s'],
         'original_dataset_short_name': ds_meta['original_dataset_short_name_s'],
         'original_dataset_url': ds_meta['original_dataset_url_s'],
@@ -222,26 +200,46 @@ def process_measures_grids(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
         granule = cycle_granules[1]
         ds = xr.open_dataset(granule['granule_file_path_s'])
 
-    cycle_ds = ds.rename({var: 'SSHA'})
+    cycle_ds = ds.rename(
+        {'Latitude': 'latitude', 'Longitude': 'longitude', 'SLA': 'SSHA', 'Time': 'time'})
+    cycle_ds = cycle_ds.drop(['SLA_ERR'])
 
-    # Var Attributes
-    cycle_ds['SSHA'].attrs['valid_min'] = np.nanmin(cycle_ds['SSHA'].values)
-    cycle_ds['SSHA'].attrs['valid_max'] = np.nanmax(cycle_ds['SSHA'].values)
+    cycle_ds.latitude.attrs = {
+        'long_name': 'latitude',
+        'standard_name': 'latitude',
+        'units': 'degrees_north',
+        'valid_min': np.nanmin(cycle_ds.latitude.values),
+        'valid_max': np.nanmax(cycle_ds.latitude.values),
+        'comment': 'Positive latitude is North latitude, negative latitude is South latitude. FillValue pads the reference orbits to have same length'
+    }
 
-    data_time_start = cycle_ds.Time_bounds.values[0][0]
-    data_time_end = cycle_ds.Time_bounds.values[-1][1]
-    data_time_center = data_time_start + ((data_time_end - data_time_start)/2)
+    cycle_ds.longitude.attrs = {
+        'long_name': 'longitude',
+        'standard_name': 'longitude',
+        'units': 'degrees_east',
+        'valid_min': np.nanmin(cycle_ds.longitude.values),
+        'valid_max': np.nanmax(cycle_ds.longitude.values),
+        'comment': 'East longitude relative to Greenwich meridian. FillValue pads the reference orbits to have same length'
+    }
+
+    cycle_ds.SSHA.attrs = {
+        'long_name': 'sea surface height anomaly',
+        'standard_name': 'sea_surface_height_above_sea_level',
+        'units': 'm',
+        'valid_min': np.nanmin(cycle_ds.SSHA.values),
+        'valid_max': np.nanmax(cycle_ds.SSHA.values),
+        'comment': 'Sea level determined from satellite altitude - range - all altimetric corrections',
+    }
 
     # Global attributes
     cycle_ds.attrs = {
-        'title': 'Sea Level Anormaly Estimate based on Altimeter Data',
+        'title': 'Sea Surface Height Anormaly Estimate based on Altimeter Data',
+        'comment': f'Data aggregated into {CYCLE_LENGTH} day cycle periods.',
+        'cycle_period': f'{dates[0]} to {dates[2]}',
         'cycle_length': CYCLE_LENGTH,
         'cycle_start': dates[0],
         'cycle_center': dates[1],
         'cycle_end': dates[2],
-        'data_time_start': np.datetime_as_string(data_time_start, unit='s'),
-        'data_time_center': np.datetime_as_string(data_time_center, unit='s'),
-        'data_time_end': np.datetime_as_string(data_time_end, unit='s'),
         'original_dataset_title': ds_meta['original_dataset_title_s'],
         'original_dataset_short_name': ds_meta['original_dataset_short_name_s'],
         'original_dataset_url': ds_meta['original_dataset_url_s'],
@@ -249,120 +247,6 @@ def process_measures_grids(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
     }
 
     return cycle_ds, 1
-
-
-def measures_regridder(source_grid, target_grid, output_path):
-    ea_path = Path(f'{Path(__file__).resolve().parents[3]}/SLI-utils/')
-    sys.path.append(str(ea_path))
-    import ecco_cloud_utils as ea  # pylint: disable=import-error
-
-    mapping_dir = output_path / 'grid_mappings'
-    mapping_dir.mkdir(parents=True, exist_ok=True)
-
-    pattern_mapping_dir = mapping_dir / 'global'
-    pattern_mapping_dir.mkdir(parents=True, exist_ok=True)
-
-    source_indices_fp = pattern_mapping_dir / f'global_ECCO_source_indices.p'
-    num_sources_fp = pattern_mapping_dir / f'global_ECCO_num_sources.p'
-
-    wet_ins = np.where(target_grid.maskC.isel(Z=0).values.ravel() > 0)[0]
-
-    if not source_indices_fp.exists() or not num_sources_fp.exists():
-        source_lons = source_grid.Longitude.values
-        source_lats = source_grid.Latitude.values
-
-        source_cw_lons, source_cw_lats = check_and_wrap(
-            source_lons, source_lats)
-
-        source_lons_m, source_lats_m = np.meshgrid(
-            source_cw_lons, source_cw_lats)
-
-        source_swath_def = pr.geometry.SwathDefinition(lons=source_lons_m,
-                                                       lats=source_lats_m)
-
-        target_lons = target_grid.longitude.values
-        target_lats = target_grid.latitude.values
-
-        target_cw_lons, target_cw_lats = check_and_wrap(
-            target_lons, target_lats)
-
-        target_lons_m, target_lats_m = np.meshgrid(
-            target_cw_lons, target_cw_lats)
-
-        target_lons_wet = target_lons_m.ravel()[wet_ins]
-        target_lats_wet = target_lats_m.ravel()[wet_ins]
-
-        target_swath_def = pr.geometry.SwathDefinition(lons=target_lons_wet,
-                                                       lats=target_lats_wet)
-
-        target_grid_radius = np.sqrt(
-            target_grid.area.values.ravel())/2*np.sqrt(2)
-
-        target_grid_radius_wet = target_grid_radius.ravel()[wet_ins]
-
-        # Use neighbors = 1 for development
-        neighbors = 100
-        neighbors = 1
-        # for along track make min(first number) small (100)
-        # save num_source_indices as DA to be included in DS for AT and measures
-        # AT need to run find_mappings for every cycle
-        source_indices_within_target_radius_i, num_source_indices_within_target_radius_i, nearest_source_index_to_target_i = ea.find_mappings_from_source_to_target(source_swath_def,
-                                                                                                                                                                    target_swath_def,
-                                                                                                                                                                    target_grid_radius_wet,
-                                                                                                                                                                    3e3,
-                                                                                                                                                                    20e3,
-                                                                                                                                                                    neighbors=neighbors)
-        with open(source_indices_fp, "wb") as f:
-            pickle.dump(source_indices_within_target_radius_i, f)
-        with open(num_sources_fp, "wb") as f:
-            pickle.dump(num_source_indices_within_target_radius_i, f)
-
-    else:
-        # Load up the existing index mappings
-        with open(source_indices_fp, "rb") as f:
-            source_indices_within_target_radius_i = pickle.load(f)
-
-        with open(num_sources_fp, "rb") as f:
-            num_source_indices_within_target_radius_i = pickle.load(f)
-
-    source_vals = source_grid.sel(
-        Time=source_grid.Time.values[0]).SSHA.values.T
-    source_vals_1d = source_vals.ravel()
-
-    new_vals_2d = np.zeros_like(target_grid.area.values) * np.nan
-
-    print('\tMapping source to global grid.')
-    for i in range(len(num_source_indices_within_target_radius_i)):
-
-        if num_source_indices_within_target_radius_i[i] != 0:
-
-            new_vals_2d.ravel()[wet_ins[i]] = sum(source_vals_1d[source_indices_within_target_radius_i[i]]
-                                                  ) / num_source_indices_within_target_radius_i[i]
-
-    # The regridded data
-    # new_vals = new_vals_1d.reshape(
-    #     len(target_grid.latitude.values), len(target_grid.longitude.values))
-    regridded_da = xr.DataArray(new_vals_2d, dims=['latitude', 'longitude'],
-                                coords={'latitude': target_grid.latitude.values,
-                                        'longitude': target_grid.longitude.values})
-
-    regridded_da = regridded_da.assign_coords(
-        coords={'Time': np.datetime64(source_grid.cycle_center)})
-    regridded_da.name = 'SSHA'
-    regridded_ds = regridded_da.to_dataset()
-    regridded_ds['mask'] = (['latitude', 'longitude'], np.where(
-        target_grid['maskC'].isel(Z=0) == True, 1, 0))
-    regridded_ds['mask'].attrs = {'long_name': 'wet/dry boolean mask for grid cell',
-                                  'comment': '1 for ocean, otherwise 0'}
-
-    regridded_ds.attrs = source_grid.attrs
-
-    regridded_ds['SSHA'].attrs = source_grid['SSHA'].attrs
-    regridded_ds['SSHA'].attrs[
-        'comment'] = f'MEaSUREs data regridded to ECCO 0.5 degree lat lon grid'
-    regridded_ds.attrs['comment'] = f'ECCO V4r4 0.5 degree lat lon grid'
-
-    return regridded_ds
 
 
 def collect_granules(ds_name, dates, date_strs, config):
@@ -486,7 +370,6 @@ def cycle_ds_encoding(cycle_ds, ds_name, center_date):
             coord_encoding[coord] = {'_FillValue': None,
                                      'zlib': True,
                                      'contiguous': False,
-                                     'calendar': 'gregorian',
                                      'shuffle': False}
             # To account for time bounds in 1812 dataset
             if '1812' in ds_name:
@@ -667,7 +550,7 @@ def cycle_creation(config, output_path, reprocess, log_time):
                 filename_time = datetime.strftime(center_date, '%Y%m%dT%H%M%S')
                 filename = f'ssha_{filename_time}.nc'
 
-                save_dir = output_path / ds_name / 'cycle_products' / 'original_grid'
+                save_dir = output_path / ds_name / 'cycle_products'
                 save_dir.mkdir(parents=True, exist_ok=True)
                 save_path = save_dir / filename
 
