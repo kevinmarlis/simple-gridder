@@ -1,17 +1,21 @@
-# Dataset config files containing sensitive information
-/SLI-pipeline/datasets/gmsl_MERGED_TP_J1_OSTM_OST_GMSL_ASCII_V42/harvester_config.yaml
-
 .vs*
 *.pyc
 
-.DS_Store
-=======
+
 # data files
 *.nc
 *.bz2
+*.h5
+*.png
+
+# sensitive files
+*earthdata_login.yaml
 
 # factors pickled files
 *_factors
+
+# test files
+*test*
 
 # Editors
 .vscode/

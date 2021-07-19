@@ -1,0 +1,14 @@
+# =====================================================
+# Dataset
+# =====================================================
+ds_name: "GSFC" # Name for dataset
+version: 1.0
+cycle_length: 10
+processor: along_track
+data_type: along_track
+
+# =====================================================
+# Solr
+# =====================================================
+solr_host_local: http://localhost:8983/solr/ # doesn't change if following standard Solr setup
+solr_collection_name: sealevel_datasets # doesn't change
