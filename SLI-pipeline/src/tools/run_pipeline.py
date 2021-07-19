@@ -2,9 +2,9 @@
 """
 import os
 import sys
+import shutil
 import logging
 from argparse import ArgumentParser
-import importlib
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
@@ -53,6 +53,9 @@ def create_parser():
 
     parser.add_argument('--harvested_entry_validation', default=False,
                         help='verifies each Solr harvester entry points to a valid file.')
+
+    parser.add_argument('--wipe_logs', default=False, action='store_true',
+                        help='Deletes all logs in logs directory.')
 
     return parser
 
@@ -142,54 +145,58 @@ def print_log(output_dir):
     with open(log_path) as log:
         logs = log.read().splitlines()
 
-    for line in logs:
-        log_line = yaml.load(line, yaml.Loader)
+    # TODO: account for manual exiting of code when logs is empty
+    if logs:
+        for line in logs:
+            log_line = yaml.load(line, yaml.Loader)
 
-        if 'harvesting' in log_line['message']:
-            ds = log_line['message'].split()[0]
-            step = 'harvesting'
-            msg = log_line['message'].replace(f'{ds} ', '', 1)
-            msg = msg[0].upper() + msg[1:]
+            if 'harvesting' in log_line['message']:
+                ds = log_line['message'].split()[0]
+                step = 'harvesting'
+                msg = log_line['message'].replace(f'{ds} ', '', 1)
+                msg = msg[0].upper() + msg[1:]
 
-        elif 'creation' in log_line['message']:
-            ds = log_line['message'].split()[0]
-            step = 'cycle creation'
-            msg = log_line['message'].replace(f'{ds} ', '', 1)
-            msg = msg[0].upper() + msg[1:]
+            elif 'creation' in log_line['message']:
+                ds = log_line['message'].split()[0]
+                step = 'cycle creation'
+                msg = log_line['message'].replace(f'{ds} ', '', 1)
+                msg = msg[0].upper() + msg[1:]
 
-        elif 'regridding' in log_line['message']:
-            ds = 'non dataset specific steps'
-            step = 'regridding'
-            msg = log_line['message']
+            elif 'regridding' in log_line['message']:
+                ds = 'non dataset specific steps'
+                step = 'regridding'
+                msg = log_line['message']
 
-        elif 'Index' in log_line['message']:
-            ds = 'non dataset specific steps'
-            step = 'index calculation'
-            msg = log_line['message']
+            elif 'Index' in log_line['message']:
+                ds = 'non dataset specific steps'
+                step = 'index calculation'
+                msg = log_line['message']
 
-        if log_line['level'] == 'INFO':
-            dataset_statuses[ds][step] = [('INFO', msg)]
+            if log_line['level'] == 'INFO':
+                dataset_statuses[ds][step] = [('INFO', msg)]
 
-        if log_line['level'] == 'ERROR':
-            dataset_statuses[ds][step] = [('ERROR', msg)]
+            if log_line['level'] == 'ERROR':
+                dataset_statuses[ds][step] = [('ERROR', msg)]
 
-    # Print dataset status summaries
-    for ds, steps in dataset_statuses.items():
-        print(f'\033[93mPipeline status for {ds}\033[0m:')
-        for _, messages in steps.items():
-            for (level, message) in messages:
+        # Print dataset status summaries
+        for ds, steps in dataset_statuses.items():
+            print(f'\033[93mPipeline status for {ds}\033[0m:')
+            for _, messages in steps.items():
+                for (level, message) in messages:
+                    if level == 'INFO':
+                        print(f'\t\033[92m{message}\033[0m')
+                    elif level == 'ERROR':
+                        print(f'\t\033[91m{message}\033[0m')
+
+        if index_statuses:
+            print('\033[93mPipeline status for index calculations\033[0m:')
+            for (level, message) in index_statuses:
                 if level == 'INFO':
                     print(f'\t\033[92m{message}\033[0m')
                 elif level == 'ERROR':
                     print(f'\t\033[91m{message}\033[0m')
-
-    if index_statuses:
-        print('\033[93mPipeline status for index calculations\033[0m:')
-        for (level, message) in index_statuses:
-            if level == 'INFO':
-                print(f'\t\033[92m{message}\033[0m')
-            elif level == 'ERROR':
-                print(f'\t\033[91m{message}\033[0m')
+    else:
+        print('Manually exited pipeline.')
 
 
 def run_harvester(datasets, output_dir):
@@ -361,6 +368,22 @@ if __name__ == '__main__':
 
     PARSER = create_parser()
     args = PARSER.parse_args()
+
+    # ---------------------- Wipe Logs -----------------------
+    if args.wipe_logs:
+        log_path = Path(OUTPUT_DIR / 'logs')
+
+        wiped_count = 0
+
+        for child in log_path.glob('*'):
+            if child.is_dir():
+                print(child)
+                shutil.rmtree(child)
+                wiped_count += 1
+
+        print(f'\nRemoved {wiped_count} log sets.\n')
+
+        exit()
 
     # -------------- Harvested Entry Validation --------------
     if args.harvested_entry_validation:
