@@ -114,7 +114,6 @@ def cycle_ds_encoding(cycle_ds):
             coord_encoding[coord] = {'_FillValue': None,
                                      'zlib': True,
                                      'contiguous': False,
-                                     'calendar': 'gregorian',
                                      'shuffle': False}
 
         if 'Lat' in coord or 'Lon' in coord:
@@ -124,7 +123,7 @@ def cycle_ds_encoding(cycle_ds):
     return encoding
 
 
-def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighbours=100):
+def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighbours=500):
     ea_path = Path(f'{Path(__file__).resolve().parents[4]}/SLI-utils/')
     sys.path.append(str(ea_path))
     import ecco_cloud_utils as ea  # pylint: disable=import-error
@@ -216,6 +215,7 @@ def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighb
                 new_vals.ravel()[wet_ins[i]] = sum(cycle_vals_1d[source_indices_within_target_radius_i[i]]
                                                    ) / num_source_indices_within_target_radius_i[i]
 
+    # Along track data
     else:
 
         instr_in_cycle = [ds.attrs['original_dataset_short_name']
@@ -224,21 +224,8 @@ def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighb
         for key in [attr for attr in global_attrs.keys() if 'original' in attr]:
             global_attrs.pop(key)
 
-        global_attrs['source'] = 'Equal weighted combination of ' + \
+        global_attrs['source'] = 'Combination of ' + \
             ', '.join(instr_in_cycle) + ' along track instruments'
-
-        data_time_bounds = []
-        for ds in ats:
-            data_time_bounds.append(ds.time.values[0])
-            data_time_bounds.append(ds.time.values[-1])
-
-        data_time_start = datetime.utcfromtimestamp(
-            min(data_time_bounds).astype('O')/1e9)
-        data_time_end = datetime.utcfromtimestamp(
-            max(data_time_bounds).astype('O')/1e9)
-
-        data_time_center = data_time_start + \
-            ((data_time_end - data_time_start)/2)
 
         if method == 'gaussian':
             # Define the 'swath' as the lats/lon pairs of the model grid
@@ -257,9 +244,9 @@ def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighb
                 ssha_grid = pr.geometry.SwathDefinition(
                     lons=tmp_ssha_lons, lats=tmp_ssha_lats)
 
-                roi = 3e5  # 6e5
+                roi = 6e5  # 6e5
                 sigma = 1e5
-                neighbours = 100  # 500
+                neighbours = 500  # 500
 
                 new_vals = resample_gauss(ssha_grid, ssha_nn,
                                           global_swath_def,
@@ -325,29 +312,36 @@ def regridder(cycle_ds, data_type, output_dir, method='gaussian', ats=[], neighb
 
     regridded_da = regridded_da.assign_coords(
         coords={'time': np.datetime64(cycle_ds.cycle_center)})
+
     regridded_da.name = 'SSHA'
     regridded_ds = regridded_da.to_dataset()
+
     regridded_ds['mask'] = (['latitude', 'longitude'], np.where(
         global_ds['maskC'].isel(Z=0) == True, 1, 0))
+
     regridded_ds['mask'].attrs = {'long_name': 'wet/dry boolean mask for grid cell',
                                   'comment': '1 for ocean, otherwise 0'}
 
     regridded_ds.attrs = cycle_ds.attrs
 
     regridded_ds['SSHA'].attrs = cycle_ds['SSHA'].attrs
-    regridded_ds['SSHA'].attrs['units'] = 'm'
-    regridded_ds['SSHA'].attrs['long_name'] = 'Sea Level Anomaly Estimate'
-    regridded_ds['SSHA'].attrs['comment'] = 'Data regridded to 0.5 degree lat lon grid'
+    regridded_ds['SSHA'].attrs['valid_min'] = np.nanmin(
+        regridded_ds['SSHA'].values)
+    regridded_ds['SSHA'].attrs['valid_max'] = np.nanmax(
+        regridded_ds['SSHA'].values)
+    regridded_ds['SSHA'].attrs['summary'] = 'Data gridded to 0.5 degree lat lon grid'
 
-    if data_type == 'along_track':
-        regridded_ds.attrs['data_time_start'] = datetime.strftime(
-            data_time_start, date_regex)
-        regridded_ds.attrs['data_time_center'] = datetime.strftime(
-            data_time_center, date_regex)
-        regridded_ds.attrs['data_time_end'] = datetime.strftime(
-            data_time_end, date_regex)
+    regridded_ds['latitude'].attrs = cycle_ds['latitude'].attrs
+    regridded_ds['longitude'].attrs = cycle_ds['longitude'].attrs
 
-    regridded_ds.attrs['comment'] = 'Regridded using ECCO V4r4 0.5 degree lat lon grid'
+    if data_type == 'along_track' and method == 'gaussian':
+        regridded_ds.attrs['gridding_method'] = \
+            f'Gridded using pyresample resample_gauss with roi={roi}, neighbours={neighbours}'
+    else:
+        regridded_ds.attrs['gridding_method'] = \
+            f'Gridded using find_mappings_from_source_to_target with neighbours={neighbors}'
+
+    regridded_ds.attrs['comment'] = 'Gridded using ECCO V4r4 0.5 degree lat lon grid'
 
     return regridded_ds
 
@@ -371,15 +365,6 @@ def regridding(config, output_dir, reprocess, log_time):
     version = config['version']
 
     regridding_status = True
-
-    # Query for regridder entry on Solr
-    # solr_regridder_doc = solr_query(config, ['type_s:regridder'])
-    # if len(solr_regridder_doc) != 0:
-    #     solr_regridder_doc = solr_regridder_doc[0]
-    #     previous_time = solr_regridder_doc['modified_time_dt']
-    # else:
-    #     solr_regridder_doc = None
-    #     previous_time = '1992-01-01'
 
     # ======================================================
     # Regrid measures cycles
@@ -501,7 +486,7 @@ def regridding(config, output_dir, reprocess, log_time):
                 inst_end += 'T00:00:00Z'
 
             fq = ['type_s:cycle', 'processing_success_b:true', f'dataset_s:{inst}',
-                  f'center_date_dt:[{inst_start} TO {inst_end}]']
+                  f'start_date_dt:[{inst_start} TO {inst_end}]']
             cycles_in_range = solr_query(config, fq)
 
             cycles_to_regrid.extend(cycles_in_range)
@@ -515,8 +500,11 @@ def regridding(config, output_dir, reprocess, log_time):
         dates = list(along_track_cycles.keys())
         dates.sort()
 
+        # TODO: implement multiprocessing?
+
         # Iterate through dates and regrid all cycles that fall on that date
         for date in dates:
+
             cycles = along_track_cycles[date]
             update = False
 
@@ -526,9 +514,12 @@ def regridding(config, output_dir, reprocess, log_time):
                 solr_combo = solr_query(config, fq)
 
                 if len(solr_combo) == 1:
-                    solr_proc_date = solr_combo[0]['processing_time_dt']
+                    existing_regrid_meta = solr_combo[0]
 
-                    if cycle['processing_time_dt'] > solr_proc_date or cycle['processing_success_b'] == 'false':
+                    # if cycle was reprocessed after prior regridding
+                    # or
+                    # prior regridding failed
+                    if cycle['processing_time_dt'] > existing_regrid_meta['processing_time_dt'] or not existing_regrid_meta['processing_success_b']:
                         update = True
                         break
                 else:
@@ -546,13 +537,36 @@ def regridding(config, output_dir, reprocess, log_time):
                         cycle = cycles[0]
                         cycle_ds = xr.open_dataset(cycle['filepath_s'])
                         ats.append(cycle_ds)
+
                     else:
                         for cycle_meta in cycles:
+                            inst = cycle_meta['dataset_s']
+
+                            start = combination[inst][0]
+                            if start == 'EARLIEST':
+                                start = '1970-01-01'
+                            start += 'T00:00:00'
+                            start = np.datetime64(start)
+
+                            end = combination[inst][1]
+                            if end == 'NOW':
+                                end = datetime.utcnow().strftime(date_regex)
+                            else:
+                                end += 'T00:00:00'
+                                end = np.datetime64(end)
+
                             ds = xr.open_dataset(cycle_meta['filepath_s'])
+
+                            sel_dates = ds.time.values[ds.time >= start]
+                            sel_dates = sel_dates[sel_dates < end]
+
+                            ds = ds.sel(time=sel_dates)
+
                             ats.append(ds)
 
                         cycle_ds = xr.concat(ats, 'time')
                         cycle_ds = cycle_ds.sortby('time')
+
                         cycle = cycle_meta
 
                     regridded_ds = regridder(
@@ -562,8 +576,8 @@ def regridding(config, output_dir, reprocess, log_time):
                         f'regridded_cycles/along_track/{combo_name}'
                     regrid_dir.mkdir(parents=True, exist_ok=True)
 
-                    center_date = cycle["center_date_dt"]
-                    filename = f'ssha_global_half_deg_{center_date[:10].replace("-", "_")}.nc'
+                    start_date = cycle["start_date_dt"]
+                    filename = f'ssha_global_half_deg_{start_date[:10].replace("-", "")}.nc'
                     global_fp = regrid_dir / filename
                     encoding = cycle_ds_encoding(regridded_ds)
 
@@ -573,8 +587,9 @@ def regridding(config, output_dir, reprocess, log_time):
                     checksum = md5(global_fp)
                     file_size = global_fp.stat().st_size
                     processing_success = True
-                except:
-                    log.exception(f'\nError while processing cycle {date}')
+                except Exception as e:
+                    log.exception(
+                        f'\nError while processing cycle {date}. {e}')
                     filename = ''
                     global_fp = ''
                     checksum = ''
@@ -588,7 +603,6 @@ def regridding(config, output_dir, reprocess, log_time):
                 item['start_date_dt'] = cycle['start_date_dt']
                 item['center_date_dt'] = cycle['center_date_dt']
                 item['end_date_dt'] = cycle['end_date_dt']
-                item['granules_in_cycle_i'] = cycle['granules_in_cycle_i']
                 item['cycle_length_i'] = cycle['cycle_length_i']
                 item['filename_s'] = filename
                 item['filepath_s'] = str(global_fp)
@@ -601,7 +615,7 @@ def regridding(config, output_dir, reprocess, log_time):
                 item['original_data_type_s'] = cycle['data_type_s']
 
                 if date in existing_regridded_at_cycles.keys():
-                    item['id'] = existing_regridded_at_cycles[date]['id']
+                    item['id'] = existing_regridded_at_cycles[date][0]['id']
                 resp = solr_update(config, [item])
                 if resp.status_code == 200:
                     print(

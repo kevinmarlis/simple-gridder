@@ -23,22 +23,34 @@ version: 1.0
 
 
 combinations:
-  - name: 'CRYOSAT_2'
-    CRYOSAT_2: ['EARLIEST', 'NOW']
-  - name: 'ENVISAT_1'
-    ENVISAT_1: ['EARLIEST', 'NOW']
-  - name: 'ERS_1'
-    ERS_1: ['EARLIEST', 'NOW']
-  - name: 'ERS_2'
-    ERS_2: ['EARLIEST', 'NOW']
-  - name: 'JASON_3'
-    JASON_3: ['EARLIEST', 'NOW']
-  - name: 'SARAL'
-    SARAL: ['EARLIEST', 'NOW']
-  - name: 'SENTINEL_3A'
-    SENTINEL_3A: ['EARLIEST', 'NOW']
-  - name: 'SENTINEL_3B'
+  # - name: 'CRYOSAT_2'
+  #   CRYOSAT_2: ['EARLIEST', 'NOW']
+  # - name: 'ENVISAT_1'
+  #   ENVISAT_1: ['EARLIEST', 'NOW']
+  # - name: 'ERS_1'
+  #   ERS_1: ['EARLIEST', 'NOW']
+  # - name: 'ERS_2'
+  #   ERS_2: ['EARLIEST', 'NOW']
+  # - name: 'JASON_3'
+  #   JASON_3: ['EARLIEST', 'NOW']
+  # - name: 'SARAL'
+  #   SARAL: ['EARLIEST', 'NOW']
+  # - name: 'SENTINEL_3A'
+  #   SENTINEL_3A: ['EARLIEST', 'NOW']
+  # - name: 'SENTINEL_3B'
+  #   SENTINEL_3B: ['EARLIEST', 'NOW']
+  # - name: 'GSFC'
+  #   GSFC: ['EARLIEST', 'NOW']
+  - name: 'COMBINATION_1'
+    ERS_1: ['EARLIEST', '1995-04-25']
+    ERS_2: ['EARLIEST', '2002-05-14']
+    ENVISAT_1: ['EARLIEST', '2012-01-01']
+    CRYOSAT_2: ['2012-01-01', '2013-03-14']
+    SARAL: ['EARLIEST', '2016-07-04']
+    SENTINEL_3A: ['EARLIEST', '2018-05-08']
     SENTINEL_3B: ['EARLIEST', 'NOW']
+
+
 
 # =====================================================
 # Solr
