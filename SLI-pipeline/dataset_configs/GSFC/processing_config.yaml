@@ -4,8 +4,7 @@
 ds_name: "GSFC" # Name for dataset
 version: 1.0
 cycle_length: 10
-processor: along_track
-data_type: along_track
+data_type: "along track"
 
 # =====================================================
 # Solr

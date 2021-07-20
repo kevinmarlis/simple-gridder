@@ -454,7 +454,6 @@ def cycle_creation(config, output_path, reprocess, log_time):
     # =====================================================
     ds_name = config['ds_name']
     version = config['version']
-    processor = config['processor']
     data_type = config['data_type']
     date_regex = '%Y-%m-%dT%H:%M:%S'
 
@@ -532,12 +531,12 @@ def cycle_creation(config, output_path, reprocess, log_time):
 
             try:
                 # Dataset specific processing of cycle
-                if processor == 'along_track':
+                if data_type == 'along track':
                     cycle_ds, granule_count = process_along_track(cycle_granules,
                                                                   ds_metadata,
                                                                   date_strs,
                                                                   CYCLE_LENGTH)
-                elif processor == 'measures_grids':
+                elif data_type == 'gridded':
                     cycle_ds, granule_count = process_measures_grids(cycle_granules,
                                                                      ds_metadata,
                                                                      date_strs,

@@ -4,7 +4,6 @@
 ds_name: "SEA_SURFACE_HEIGHT_ALT_GRIDS_L4_2SATS_5DAY_6THDEG_V_JPL1812" # Name for dataset
 version: 1.2
 cycle_length: 5
-processor: measures_grids
 data_type: gridded
 
 # =====================================================
