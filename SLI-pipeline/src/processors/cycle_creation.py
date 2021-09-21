@@ -1,19 +1,16 @@
 """
-This module handles dataset processing into 10 day cycles.
+This module handles dataset processing into 5, 10, or 30 day cycles.
 """
-import sys
+# from mmap import ACCESS_DEFAULT
 import logging
 import hashlib
 import warnings
 from datetime import datetime, timedelta
 import requests
-import pickle
 from pathlib import Path
 import numpy as np
 import xarray as xr
-import pyresample as pr
 from netCDF4 import default_fillvals  # pylint: disable=no-name-in-module
-from pyresample.utils import check_and_wrap
 
 # warnings.filterwarnings("ignore")
 warnings.simplefilter("ignore")
@@ -122,11 +119,36 @@ def process_along_track(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
         except:
             ds = xr.open_dataset(granule['granule_file_path_s'])
 
+            if 'ssha' in ds.data_vars:
+                var = 'ssha'
+            elif 'sla' in ds.data_vars:
+                var = 'sla'
+            elif 'sla_mle3' in ds.data_vars:
+                var = 'sla_mle3'
+
             ds = ds.rename(
-                {'lat': 'latitude', 'lon': 'longitude', 'ssha': 'SSHA'})
+                {'lat': 'latitude', 'lon': 'longitude', var: 'SSHA'})
+
+            if 'time_rel_eq' in ds.data_vars:
+                eq_dt = datetime.strptime(
+                    ds.attrs['equator_time'], '%Y-%m-%d %H:%M:%S.%f')
+
+                adjusted_times = [eq_dt + timedelta(seconds=time)
+                                  for time in ds.time_rel_eq.values]
+                ds = ds.assign_coords(time=('time', adjusted_times))
+
+                ds.time.attrs = {
+                    'long_name': 'time',
+                    'standard_name': 'time',
+                }
+
+            if granule['dataset_s'] == 'GSFC':
+                ds = ds.swap_dims({'N_Records': 'time'})
+
+                #  Convert to meters
+                ds['SSHA'] = ds['SSHA'] / 1e3
+
             ds = ds[['SSHA', 'latitude', 'longitude', 'time']]
-            ds = ds.swap_dims({'N_Records': 'time'})
-            ds['SSHA'] = ds['SSHA'] / 1e3
 
         ds.latitude.attrs = {
             'long_name': 'latitude',
@@ -322,7 +344,6 @@ def check_updating(cycles, date_strs, cycle_granules, version):
     Returns:
         (bool): whether or not the cycle requires reprocessing
     """
-
     # Cycles dict uses the PODAAC date format (with a trailing 'Z')
     if date_strs[0] + 'Z' in cycles.keys():
         existing_cycle = cycles[date_strs[0] + 'Z']
@@ -365,6 +386,7 @@ def cycle_ds_encoding(cycle_ds, ds_name, center_date):
     var_encodings = {var: var_encoding for var in cycle_ds.data_vars}
 
     coord_encoding = {}
+
     for coord in cycle_ds.coords:
         if 'Time' in coord:
             coord_encoding[coord] = {'_FillValue': None,

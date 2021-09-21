@@ -10,6 +10,7 @@
 
 # sensitive files
 *earthdata_login.yaml
+*ftp_login.yaml
 
 # factors pickled files
 *_factors

@@ -12,7 +12,7 @@ ___
 ## harvester_config.yaml
 These config files contain start/end date values, the name to be used for the dataset (should be the same as the DATASET_NAME directory above), metadata regarding the dataset itself, and the location of the SOLR database.
 
-The harvester config file also dictates where the dataset will be harvested from. Most datasets are available on a restricted PODAAC drive. The harvester type *PODAAC Drive* works for these datasets. The gridded 1812 dataset is publicly available using PODAAC's granule search. The *podaac* harvester type works for datasets available there. Follow the 1812 example config using the new dataset's PODAAC ID. Lastly, the GSFC reference mission data is hosted locally and uses the *local* harvester.
+The harvester config file also dictates where the dataset will be harvested from. Along track instrument datasets are available on a restricted PODAAC drive. The harvester type *PODAAC Drive* works for these datasets. The gridded 1812 dataset is publicly available using PODAAC's granule search. The *podaac* harvester type works for datasets available there. Follow the 1812 example config using the new dataset's PODAAC ID. Lastly, the *local* harvester works for local data, but will require some retooling depending on the structure of the local data.
 
 
 ## processing_config.yaml

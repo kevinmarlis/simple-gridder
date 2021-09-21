@@ -23,6 +23,27 @@ version: 1.0
 
 
 combinations:
+  # DAILY is a required combination. MEASURES_1812 is automatically performed.
+
+  - name: 'DAILY'
+    times: ['2019-01-01', 'NOW']
+    instruments: [JASON_3_again, SENTINEL_3B]
+    # JASON_3_again: ['2019-01-01', 'NOW']
+    # SENTINEL_3B: ['2019-01-01', 'NOW']
+
+
+  # COMPLETE ALONG TRACK DAILY COMBINATION
+  # - name: 'COMBINATION_1'
+  #   ERS_1: ['1992-09-25', '1995-04-24']
+  #   ERS_2: ['1995-04-25', '2002-05-23']
+  #   ENVISAT_1: ['2002-05-24', '2011-12-31']
+  #   CRYOSAT_2: ['2012-01-01', '2013-03-14']
+  #   SARAL: ['2013-03-15', '2016-07-03']
+  #   SENTINEL_3A: ['2016-07-04', '2018-06-28']
+  #   SENTINEL_3B: ['2018-06-29', 'NOW']
+
+
+  # INDIVIDUAL ALONG TRACK DAILY DATASETS
   # - name: 'CRYOSAT_2'
   #   CRYOSAT_2: ['EARLIEST', 'NOW']
   # - name: 'ENVISAT_1'
@@ -41,14 +62,8 @@ combinations:
   #   SENTINEL_3B: ['EARLIEST', 'NOW']
   # - name: 'GSFC'
   #   GSFC: ['EARLIEST', 'NOW']
-  - name: 'COMBINATION_1'
-    ERS_1: ['EARLIEST', '1995-04-25']
-    ERS_2: ['EARLIEST', '2002-05-14']
-    ENVISAT_1: ['EARLIEST', '2012-01-01']
-    CRYOSAT_2: ['2012-01-01', '2013-03-14']
-    SARAL: ['EARLIEST', '2016-07-04']
-    SENTINEL_3A: ['EARLIEST', '2018-05-08']
-    SENTINEL_3B: ['EARLIEST', 'NOW']
+  # - name: 'JASON_3_again'
+  #   JASON_3_again: ['EARLIEST', 'NOW']
 
 
 

@@ -1,10 +1,10 @@
 # =====================================================
 # Dataset
 # =====================================================
-ds_name: "GSFC" # Name for dataset
-version: 1.0
-cycle_length: 10
-data_type: "along track"
+ds_name: "MEASURES_1812" # Name for dataset
+version: 1.2
+cycle_length: 5
+data_type: gridded
 
 # =====================================================
 # Solr

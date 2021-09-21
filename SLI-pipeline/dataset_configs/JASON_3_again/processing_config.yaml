@@ -1,9 +1,9 @@
 # =====================================================
 # Dataset
 # =====================================================
-ds_name: "ENVISAT_1" # Name for dataset
+ds_name: "JASON_3_again" # Name for dataset
 version: 1.0
-cycle_length: 30
+cycle_length: 10
 data_type: "along track"
 
 # =====================================================

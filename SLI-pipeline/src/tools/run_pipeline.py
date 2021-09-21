@@ -113,15 +113,15 @@ def show_menu():
     """
     while True:
         print(f'\n{" OPTIONS ":-^35}')
-        print('1) Harvest and process all datasets')
+        print('1) Run pipeline on all')
         print('2) Harvest all datasets')
         print('3) Update cycles for all datasets')
-        print('4) Regrid all cycle combinations')
+        print('4) Regrid DAILY and MEASURES datasets')
         print('5) Dataset input')
         print('6) Calculate index values')
         selection = input('Enter option number: ')
 
-        if selection in ['1', '2', '3', '4', '5', '6']:
+        if selection in ['1', '2', '3', '4', '5', '6', '7']:
             return selection
         print(
             f'Unknown option entered, "{selection}", please enter a valid option\n')
@@ -327,6 +327,8 @@ def run_indexing(src_path, output_dir, reprocess):
     print(' \033[36mRunning index calculations\033[0m '.center(66, '='))
     print(ROW + '\n')
 
+    updated = False
+
     try:
         print('\033[93mRunning index calculation\033[0m')
         print(ROW)
@@ -338,8 +340,8 @@ def run_indexing(src_path, output_dir, reprocess):
 
         from processors.indicators.indicators import indicators
 
-        indicators(config=config, output_path=output_dir,
-                   reprocess=reprocess, log_time=LOG_TIME)
+        updated = indicators(config=config, output_path=output_dir,
+                             reprocess=reprocess, log_time=LOG_TIME)
 
         log.info('Index calculation complete.')
         print('\033[92mIndex calculation successful\033[0m')
@@ -348,6 +350,31 @@ def run_indexing(src_path, output_dir, reprocess):
         log.error(f'Index calculation failed: {e}')
         print('\033[91mIndex calculation failed\033[0m')
     print(ROW)
+
+    return updated
+
+
+def run_txt_gen_and_post(OUTPUT_DIR):
+    import txt_engine
+    import upload_indicators
+
+    txt_success = False
+
+    try:
+        txt_engine.main(OUTPUT_DIR)
+        log.info('Index txt file creation complete.')
+        txt_success = True
+    except Exception as e:
+        log.error(f'Index txt file creation failed: {e}')
+
+    if txt_success:
+        try:
+            upload_indicators.main(OUTPUT_DIR)
+            log.info('Index txt file upload complete.')
+        except Exception as e:
+            log.error(f'Index txt file upload failed: {e}')
+    else:
+        log.error('Txt file creation failed. Not attempting to upload file.')
 
 
 if __name__ == '__main__':
@@ -426,9 +453,18 @@ if __name__ == '__main__':
     log.addHandler(file_handler)
 
     DATASETS = [ds.name for ds in PATH_TO_DATASETS.iterdir()
-                if ds.name != '.DS_Store']
+                if ds.name != '.DS_Store' and ds.name != 'README.md']
+
+    DATASETS.sort()
 
     CHOSEN_OPTION = show_menu() if args.options_menu and not REPROCESS else '1'
+
+    # print('1) Run pipeline on all')
+    # print('2) Harvest all datasets')
+    # print('3) Update cycles for all datasets')
+    # print('4) Regrid DAILY and MEASURES datasets')
+    # print('5) Dataset input')
+    # print('6) Calculate index values')
 
     # Run all
     if CHOSEN_OPTION == '1':
@@ -436,14 +472,15 @@ if __name__ == '__main__':
             run_harvester([dataset], OUTPUT_DIR)
             run_cycle_creation([dataset], OUTPUT_DIR, REPROCESS)
         run_cycle_regridding(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
-        run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
+        if run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS):
+            run_txt_gen_and_post()
 
-    # Run harvester
+    # Run harvesters
     elif CHOSEN_OPTION == '2':
         for dataset in DATASETS:
             run_harvester([dataset], OUTPUT_DIR)
 
-    # Run processing
+    # Run cycling
     elif CHOSEN_OPTION == '3':
         for dataset in DATASETS:
             run_cycle_creation([dataset], OUTPUT_DIR, REPROCESS)
@@ -452,9 +489,7 @@ if __name__ == '__main__':
     elif CHOSEN_OPTION == '4':
         run_cycle_regridding(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
 
-        # run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
-
-    # Manually enter dataset and pipeline step(s)
+    # Select dataset and pipeline step(s)
     elif CHOSEN_OPTION == '5':
         ds_dict = dict(enumerate(DATASETS, start=1))
         while True:
@@ -504,6 +539,10 @@ if __name__ == '__main__':
             # run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
 
     elif CHOSEN_OPTION == '6':
-        run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
+        if run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS):
+            run_txt_gen_and_post(OUTPUT_DIR)
+
+    elif CHOSEN_OPTION == '7':
+        run_txt_gen_and_post(OUTPUT_DIR)
 
     print_log(OUTPUT_DIR)

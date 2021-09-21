@@ -2,12 +2,6 @@
 # Indicators
 # =====================================================
 
-# Define which method of index calculation to use
-method: 3
-
-# Define which along track combination to use
-# Use the desired combination name below (combination_s in solr regridded_cycle entries)
-combination: COMBINATION_1
 
 # =====================================================
 # Solr

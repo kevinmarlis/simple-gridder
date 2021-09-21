@@ -4,15 +4,14 @@ This module handles data granule harvesting for datasets hosted locally and on P
 
 import hashlib
 import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
-import yaml
 from xml.etree.ElementTree import fromstring
-import requests
-import xarray as xr
-import shutil
-from webdav3.client import Client
 
+import requests
+import yaml
+from webdav3.client import Client
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.ERROR)
@@ -156,7 +155,9 @@ def podaac_harvester(config, docs, target_dir):
             # Extract download link from XML entry
             link = elem.find(
                 "{%(atom)s}link[@title='OPeNDAP URL']" % namespace).attrib['href'][:-5]
+
             filename = link.split("/")[-1]
+
             # Extract start date from XML entry
             date_start_str = elem.find(
                 "{%(time)s}start" % namespace).text[:19] + 'Z'
@@ -279,8 +280,13 @@ def podaac_drive_harvester(config, docs, target_dir):
         'webdav_password': earthdata_login['password'],
         'disable_check': True
     }
-
-    client = Client(webdav_options)
+    
+    try:
+        client = Client(webdav_options)
+        print('Successfully connected to r-drive.')
+    except Exception as e:
+        log.error(f'Unable to login to r-drive. {e}')
+        raise(f'Unable to login to r-drive. {e}')
 
     ds_years = client.list(webdav_ds_name)[1:]
 
@@ -409,37 +415,34 @@ def local_harvester(config, docs, target_dir):
     entries_for_solr = []
 
     # Move and rename data files that satisfy date range
-    data_dir = Path(f'/Users/marlis/Developer/SLI/Severine Data/{ds_name}')
+    data_dir = Path(f'/Users/marlis/Developer/SLI/New data/{ds_name}')
 
     data_files = [filepath for filepath in data_dir.rglob("*.nc")]
+    data_files = [filepath for filepath in data_dir.rglob("*.h5")]
     data_files.sort()
 
     for filepath in data_files:
-        ds = xr.open_dataset(filepath)
+        try:
+            file_date = filepath.name[-11:-3]
+            file_date = f'{file_date}T00:00:00Z'
 
-        if ds_name == 'GSFC':
-            date = ds.attrs['time_coverage_end']
-            file_date = date.replace('-', '').replace(':', '')[:-2] + 'Z'
+            if file_date < start_time or file_date > end_time:
+                continue
 
-        else:
-            date = ds.attrs['last_meas_time']
-            file_date = date.replace('-', '').replace(' ', 'T')[:-7] + 'Z'
+            print(f'Moving {file_date}')
+            file_date = file_date.replace(':', '')
 
-        if file_date < start_time or file_date > end_time:
+            year = file_date[:4]
+
+            output_dir = target_dir / year
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            filename = f'{ds_name}_{file_date}.nc'
+            local_fp = output_dir / filename
+
+            shutil.move(filepath, local_fp)
+        except:
             continue
-
-        print(f'Moving {file_date}')
-        file_date = file_date.replace(':', '')
-
-        year = date[:4]
-
-        output_dir = target_dir / year
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        filename = f'{ds_name}_{file_date}.nc'
-        local_fp = output_dir / filename
-
-        shutil.move(filepath, local_fp)
 
     data_files = [filepath for filepath in target_dir.rglob("*.nc")]
     data_files.sort()
@@ -518,6 +521,8 @@ def harvester(config, output_path, log_time):
     # Setup variables from harvester_config.yaml
     # =====================================================
     ds_name = config['ds_name']
+    if ds_name == 'JASON_3':
+        return "Jason 3"
     shortname = config['original_dataset_short_name']
 
     target_dir = output_path / ds_name / 'harvested_granules'
