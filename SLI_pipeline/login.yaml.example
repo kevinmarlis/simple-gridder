@@ -1,0 +1,6 @@
+ed_user: username
+ed_password: password
+
+ftp_host: ip address
+ftp_username: username
+ftp_password: password

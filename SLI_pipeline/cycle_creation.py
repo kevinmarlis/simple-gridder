@@ -1,85 +1,24 @@
 """
 This module handles dataset processing into 5, 10, or 30 day cycles.
 """
-# from mmap import ACCESS_DEFAULT
 import logging
-import hashlib
 import warnings
 from datetime import datetime, timedelta
-import requests
-from pathlib import Path
+
 import numpy as np
 import xarray as xr
 from netCDF4 import default_fillvals  # pylint: disable=no-name-in-module
 
+from utils import file_utils, solr_utils
+
 # warnings.filterwarnings("ignore")
 warnings.simplefilter("ignore")
 
+
+logs_path = 'SLI_pipeline/logs/'
+logging.config.fileConfig(f'{logs_path}/log.ini',
+                          disable_existing_loggers=False)
 log = logging.getLogger(__name__)
-log.setLevel(logging.ERROR)
-
-
-def md5(fpath):
-    """
-    Creates md5 checksum from file
-
-    Params:
-        fpath (str): path of the file
-
-    Returns:
-        hash_md5.hexdigest (str): double length string containing only hexadecimal digits
-    """
-    hash_md5 = hashlib.md5()
-    with open(fpath, 'rb') as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
-
-
-def solr_query(config, fq):
-    """
-    Queries Solr database using the filter query passed in.
-
-    Params:
-        config (dict): the dataset specific config file
-        fq (List[str]): the list of filter query arguments
-
-    Returns:
-        response.json()['response']['docs'] (List[dict]): the Solr docs that satisfy the query
-    """
-
-    solr_host = config['solr_host_local']
-    solr_collection_name = config['solr_collection_name']
-
-    query_params = {'q': '*:*',
-                    'fq': fq,
-                    'rows': 300000,
-                    'sort': 'date_dt asc'}
-
-    url = f'{solr_host}{solr_collection_name}/select?'
-    response = requests.get(url, params=query_params)
-    return response.json()['response']['docs']
-
-
-def solr_update(config, update_body):
-    """
-    Updates Solr database with list of docs. If a doc contains an existing id field,
-    Solr will update or replace that existing doc with the new doc.
-
-    Params:
-        config (dict): the dataset specific config file
-        update_body (List[dict]): the list of docs to update on Solr
-
-    Returns:
-        requests.post(url, json=update_body) (Response): the Response object from the post call
-    """
-
-    solr_host = config['solr_host_local']
-    solr_collection_name = config['solr_collection_name']
-
-    url = f'{solr_host}{solr_collection_name}/update?commit=true'
-
-    return requests.post(url, json=update_body)
 
 
 def process_along_track(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
@@ -218,7 +157,7 @@ def process_measures_grids(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
 
     ds = xr.open_dataset(granule['granule_file_path_s'])
 
-    if np.isnan(ds[var].values).all():
+    if np.isnan(ds[var].values).all() and len(cycle_granules) > 1:
         granule = cycle_granules[1]
         ds = xr.open_dataset(granule['granule_file_path_s'])
 
@@ -271,7 +210,7 @@ def process_measures_grids(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
     return cycle_ds, 1
 
 
-def collect_granules(ds_name, dates, date_strs, config):
+def collect_granules(ds_name, dates, date_strs):
     """
     Collects granules that fall within a cycle's date range.
     The measures gridded dataset (1812) needs to only select the single granule closest
@@ -282,44 +221,26 @@ def collect_granules(ds_name, dates, date_strs, config):
         dates (Tuple[datetime, datetime, datetime]): the start, center, and end of the cycle 
                                                      in datetime format
         date_strs (Tuple[str, str, str]): the start, center, and end of the cycle in string format
-        config (dict): the dataset specific config file
-
 
     Returns:
         cycle_granules (List[dict]): the Solr docs that satisfy the query
     """
     solr_regex = '%Y-%m-%dT%H:%M:%SZ'
-    solr_host = config['solr_host_local']
-    solr_collection_name = config['solr_collection_name']
+    query_start = datetime.strftime(dates[0], solr_regex)
+    query_end = datetime.strftime(dates[2], solr_regex)
+    fq = ['type_s:granule', f'dataset_s:{ds_name}', 'harvest_success_b:true',
+          f'date_dt:[{query_start} TO {query_end}}}']
 
     # Find the granule with date closest to center of cycle
     # Uses special Solr query function to automatically return granules in proximal order
     if '1812' in ds_name:
-        query_start = datetime.strftime(dates[0], solr_regex)
-        query_end = datetime.strftime(dates[2], solr_regex)
-        fq = ['type_s:granule', f'dataset_s:{ds_name}', 'harvest_success_b:true',
-              f'date_dt:[{query_start} TO {query_end}}}']
         boost_function = f'recip(abs(ms({date_strs[1]}Z,date_dt)),3.16e-11,1,1)'
 
-        query_params = {'q': '*:*',
-                        'fq': fq,
-                        'bf': boost_function,
-                        'defType': 'edismax',
-                        'rows': 300000,
-                        'sort': 'date_s asc'}
-
-        url = f'{solr_host}{solr_collection_name}/select?'
-        response = requests.get(url, params=query_params)
-        cycle_granules = response.json()['response']['docs']
+        cycle_granules = solr_utils.solr_query_boost(fq, boost_function)
 
     # Get granules within start_date and end_date
     else:
-        query_start = datetime.strftime(dates[0], solr_regex)
-        query_end = datetime.strftime(dates[2], solr_regex)
-        fq = ['type_s:granule', f'dataset_s:{ds_name}', 'harvest_success_b:true',
-              f'date_dt:[{query_start} TO {query_end}}}']
-
-        cycle_granules = solr_query(config, fq)
+        cycle_granules = solr_utils.solr_query(fq)
 
     return cycle_granules
 
@@ -424,13 +345,13 @@ def post_process_solr_update(config, ds_metadata):
 
     # Query for failed cycle documents
     fq = ['type_s:cycle', f'dataset_s:{ds_name}', 'processing_success_b:false']
-    failed_processing = solr_query(config, fq)
+    failed_processing = solr_utils.solr_query(fq)
 
     if failed_processing:
         # Query for successful cycle documents
         fq = ['type_s:cycle',
               f'dataset_s:{ds_name}', 'processing_success_b:true']
-        successful_processing = solr_query(config, fq)
+        successful_processing = solr_utils.solr_query(fq)
 
         processing_status = 'No cycles successfully processed (all failed or no granules to process)'
 
@@ -438,7 +359,7 @@ def post_process_solr_update(config, ds_metadata):
             processing_status = f'{len(failed_processing)} cycles failed'
 
     ds_metadata['processing_status_s'] = {"set": processing_status}
-    resp = solr_update(config, [ds_metadata])
+    resp = solr_utils.solr_update([ds_metadata], True)
 
     if resp.status_code == 200:
         print('Successfully updated Solr dataset document\n')
@@ -448,7 +369,7 @@ def post_process_solr_update(config, ds_metadata):
     return processing_status
 
 
-def cycle_creation(config, output_path, reprocess, log_time):
+def cycle_creation(config, output_path, reprocess):
     """
     Generates encoding dictionary used for saving the cycle netCDF file.
     The measures gridded dataset (1812) has additional units encoding requirements.
@@ -458,18 +379,6 @@ def cycle_creation(config, output_path, reprocess, log_time):
         output_path (Path): path to the pipeline's output directory
         reprocess (bool): denotes if all cycles should be reprocessed
     """
-
-    # Set file handler for log using output_path
-    formatter = logging.Formatter('%(asctime)s: %(message)s')
-
-    logs_path = Path(output_path / f'logs/{log_time}')
-    logs_path.mkdir(parents=True, exist_ok=True)
-
-    file_handler = logging.FileHandler(logs_path / 'cycle_creation.log')
-    file_handler.setLevel(logging.ERROR)
-    file_handler.setFormatter(formatter)
-
-    log.addHandler(file_handler)
 
     # =====================================================
     # Setup variables from config.yaml
@@ -483,8 +392,8 @@ def cycle_creation(config, output_path, reprocess, log_time):
 
     # Query for dataset metadata
     try:
-        ds_metadata = solr_query(
-            config, ['type_s:dataset', f'dataset_s:{ds_name}'])[0]
+        fq = ['type_s:dataset', f'dataset_s:{ds_name}']
+        ds_metadata = solr_utils.solr_query(fq)[0]
     except:
         log.exception(
             f'Error while querying for {ds_name} dataset entry. Cannot create cycles if harvesting has not been run. Check Solr.')
@@ -497,7 +406,8 @@ def cycle_creation(config, output_path, reprocess, log_time):
             f'No granules harvested for {ds_name}. Check Solr.')
 
     # Query for all existing cycles in Solr
-    solr_cycles = solr_query(config, ['type_s:cycle', f'dataset_s:{ds_name}'])
+    fq = ['type_s:cycle', f'dataset_s:{ds_name}']
+    solr_cycles = solr_utils.solr_query(fq)
 
     cycles = {cycle['start_date_dt']: cycle for cycle in solr_cycles}
 
@@ -530,7 +440,7 @@ def cycle_creation(config, output_path, reprocess, log_time):
         # Collect granules within cycle
         # ======================================================
 
-        cycle_granules = collect_granules(ds_name, dates, date_strs, config)
+        cycle_granules = collect_granules(ds_name, dates, date_strs)
 
         # Skip cycle if no granules harvested
         if not cycle_granules:
@@ -578,7 +488,7 @@ def cycle_creation(config, output_path, reprocess, log_time):
                 cycle_ds.to_netcdf(save_path, encoding=encoding)
 
                 # Determine checksum and file size
-                checksum = md5(save_path)
+                checksum = file_utils.md5(save_path)
                 file_size = save_path.stat().st_size
                 processing_success = True
 
@@ -614,7 +524,7 @@ def cycle_creation(config, output_path, reprocess, log_time):
             if start_date_str + 'Z' in cycles.keys():
                 item['id'] = cycles[start_date_str + 'Z']['id']
 
-            resp = solr_update(config, [item])
+            resp = solr_utils.solr_update([item], True)
             if resp.status_code == 200:
                 print('\tSuccessfully created or updated Solr cycle documents')
 
@@ -625,12 +535,12 @@ def cycle_creation(config, output_path, reprocess, log_time):
                     else:
                         fq = ['type_s:cycle',
                               f'dataset_s:{ds_name}', f'filename_s:{filename}']
-                        cycle_id = solr_query(config, fq)[0]['id']
+                        cycle_id = solr_utils.solr_query(fq)[0]['id']
 
                     for granule in cycle_granules:
                         granule['cycle_id_s'] = cycle_id
 
-                    resp = solr_update(config, cycle_granules)
+                    resp = solr_utils.solr_update(cycle_granules)
 
             else:
                 print('\tFailed to create Solr cycle documents')

@@ -2,8 +2,8 @@
 This module handles data granule harvesting for datasets hosted locally and on PODAAC.
 """
 
-import hashlib
 import logging
+import logging.config
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -12,53 +12,12 @@ from xml.etree.ElementTree import fromstring
 import requests
 import yaml
 from webdav3.client import Client
+from utils import file_utils, solr_utils
 
+logs_path = 'SLI_pipeline/logs/'
+logging.config.fileConfig(f'{logs_path}/log.ini',
+                          disable_existing_loggers=False)
 log = logging.getLogger(__name__)
-log.setLevel(logging.ERROR)
-
-
-def md5(fname):
-    """
-    Creates md5 checksum from file
-
-    Params:
-        fpath (Path): path of the file
-
-    Returns:
-        hash_md5.hexdigest (str): double length string containing only hexadecimal digits
-    """
-    hash_md5 = hashlib.md5()
-    with open(fname, 'rb') as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
-
-
-def solr_query(config, fq, sort=''):
-    """
-    Queries Solr database using the filter query passed in.
-
-    Params:
-        config (dict): the dataset specific config file
-        fq (List[str]): the list of filter query arguments
-
-    Returns:
-        response.json()['response']['docs'] (List[dict]): the Solr docs that satisfy the query
-    """
-
-    solr_host = config['solr_host_local']
-    solr_collection_name = config['solr_collection_name']
-
-    query_params = {'q': '*:*',
-                    'fq': fq,
-                    'rows': 300000}
-
-    if sort:
-        query_params['sort'] = sort
-
-    url = f'{solr_host}{solr_collection_name}/select?'
-    response = requests.get(url, params=query_params)
-    return response.json()['response']['docs']
 
 
 def print_resp(resp, msg=''):
@@ -73,27 +32,6 @@ def print_resp(resp, msg=''):
         print(f'Successfully created or updated Solr {msg}')
     else:
         print(f'Failed to create or update Solr {msg}')
-
-
-def solr_update(config, update_body):
-    """
-    Updates Solr database with list of docs. If a doc contains an existing id field,
-    Solr will update or replace that existing doc with the new doc.
-
-    Params:
-        config (dict): the dataset specific config file
-        update_body (List[dict]): the list of docs to update on Solr
-
-    Returns:
-        requests.post(url, json=update_body) (Response): the Response object from the post call
-    """
-
-    solr_host = config['solr_host_local']
-    solr_collection_name = config['solr_collection_name']
-
-    url = f'{solr_host}{solr_collection_name}/update?commit=true'
-
-    return requests.post(url, json=update_body)
 
 
 def podaac_harvester(config, docs, target_dir):
@@ -209,7 +147,7 @@ def podaac_harvester(config, docs, target_dir):
                             f' - {filename} already downloaded, but not in Solr.')
 
                     # Create checksum for file
-                    item['checksum_s'] = md5(local_fp)
+                    item['checksum_s'] = file_utils.md5(local_fp)
                     item['granule_file_path_s'] = str(local_fp)
                     item['file_size_l'] = local_fp.stat().st_size
 
@@ -280,7 +218,7 @@ def podaac_drive_harvester(config, docs, target_dir):
         'webdav_password': earthdata_login['password'],
         'disable_check': True
     }
-    
+
     try:
         client = Client(webdav_options)
         print('Successfully connected to r-drive.')
@@ -359,7 +297,7 @@ def podaac_drive_harvester(config, docs, target_dir):
                             f' - {filename} already downloaded, but not in Solr.')
 
                     # Create checksum for file
-                    item['checksum_s'] = md5(local_fp)
+                    item['checksum_s'] = file_utils.md5(local_fp)
                     item['granule_file_path_s'] = str(local_fp)
                     item['file_size_l'] = local_fp.stat().st_size
 
@@ -494,7 +432,7 @@ def local_harvester(config, docs, target_dir):
     return entries_for_solr, source
 
 
-def harvester(config, output_path, log_time):
+def harvester(config, output_path):
     """
     Harvests new or updated granules from a local drive for a dataset. Posts granule metadata docs
     to Solr and creates or updates dataset metadata doc.
@@ -504,18 +442,6 @@ def harvester(config, output_path, log_time):
         config (dict): the dataset specific config file
         output_path (Path): the existing granule docs on Solr in dict format
     """
-
-    # Set file handler for log using output_path
-    formatter = logging.Formatter('%(asctime)s: %(message)s')
-
-    logs_path = Path(output_path / f'logs/{log_time}/')
-    logs_path.mkdir(parents=True, exist_ok=True)
-
-    file_handler = logging.FileHandler(logs_path / 'harvester.log')
-    file_handler.setLevel(logging.ERROR)
-    file_handler.setFormatter(formatter)
-
-    log.addHandler(file_handler)
 
     # =====================================================
     # Setup variables from harvester_config.yaml
@@ -535,8 +461,8 @@ def harvester(config, output_path, log_time):
     # =====================================================
 
     # Query for existing granule docs
-    harvested_docs = solr_query(
-        config, ['type_s:granule', f'dataset_s:{ds_name}'])
+    fq = ['type_s:granule', f'dataset_s:{ds_name}']
+    harvested_docs = solr_utils.solr_query(fq)
 
     # Dictionary of existing granule docs
     # granule filename : solr entry for that doc
@@ -558,7 +484,7 @@ def harvester(config, output_path, log_time):
     # Only update Solr harvested entries if there are fresh downloads
     if entries_for_solr:
         # Update Solr with downloaded granule metadata entries
-        resp = solr_update(config, entries_for_solr)
+        resp = solr_utils.solr_update(entries_for_solr, True)
         print_resp(resp, msg='granule documents')
 
     # =====================================================
@@ -567,11 +493,11 @@ def harvester(config, output_path, log_time):
 
     # Query for Solr failed harvest documents
     fq = ['type_s:granule', f'dataset_s:{ds_name}', 'harvest_success_b:false']
-    failed_harvesting = solr_query(config, fq)
+    failed_harvesting = solr_utils.solr_query(fq)
 
     # Query for Solr successful harvest documents
     fq = ['type_s:granule', f'dataset_s:{ds_name}', 'harvest_success_b:true']
-    successful_harvesting = solr_query(config, fq, sort='date_dt asc')
+    successful_harvesting = solr_utils.solr_query(fq, sort='date_dt asc')
 
     if not successful_harvesting:
         harvest_status = 'No usable granules harvested (either all failed or no data collected)'
@@ -581,16 +507,16 @@ def harvester(config, output_path, log_time):
         harvest_status = 'All granules successfully harvested'
 
     # Query for Solr Dataset-level Document
-    dataset_query = solr_query(
-        config, ['type_s:dataset', f'dataset_s:{ds_name}'])
+    fq = ['type_s:dataset', f'dataset_s:{ds_name}']
+    dataset_query = solr_utils.solr_query(fq)
 
     ds_start = successful_harvesting[0]['date_dt'] if successful_harvesting else None
     ds_end = successful_harvesting[-1]['date_dt'] if successful_harvesting else None
 
     # Query for Solr successful harvest documents
     fq = ['type_s:granule', f'dataset_s:{ds_name}', 'harvest_success_b:true']
-    successful_harvesting = solr_query(
-        config, fq, sort='download_time_dt desc')
+    successful_harvesting = solr_utils.solr_query(
+        fq, sort='download_time_dt desc')
 
     last_dl = successful_harvesting[0]['download_time_dt'] if successful_harvesting else None
 
@@ -619,7 +545,7 @@ def harvester(config, output_path, log_time):
         ds_meta['id'] = dataset_query[0]['id']
 
     # Update Solr with modified dataset entry
-    resp = solr_update(config, [ds_meta])
+    resp = solr_utils.solr_update([ds_meta], True)
     print_resp(resp, msg='dataset document\n')
 
     return harvest_status
