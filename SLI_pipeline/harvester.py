@@ -331,11 +331,17 @@ def local_harvester(config, docs, target_dir):
     Harvests new or updated granules from a local drive for a specific dataset, within a
     specific date range. Creates new or modifies granule docs for each harvested granule.
 
+    NOTE: Assumes data files are in expected directory structure:
+    - SLI_output
+        - {ds_name}
+            - harvested_granules
+                -{year}
+                    - {ds_name}_YYYYMMDDTHHMMSSZ
+
     Params:
         config (dict): the dataset specific config file
         docs (dict): the existing granule docs on Solr in dict format
         target_dir (Path): the path of the dataset's harvested granules directory
-
     Returns:
         entries_for_solr (List[dict]): all new or modified granule metadata docs to be posted to Solr
         source (str): denotes granule/dataset was harvested from a local directory
@@ -351,42 +357,14 @@ def local_harvester(config, docs, target_dir):
         "%Y%m%dT%H:%M:%SZ") if config['most_recent'] else config['end']
 
     entries_for_solr = []
-
-    # Move and rename data files that satisfy date range
-    data_dir = Path(f'/Users/marlis/Developer/SLI/New data/{ds_name}')
-
-    data_files = [filepath for filepath in data_dir.rglob("*.nc")]
-    data_files = [filepath for filepath in data_dir.rglob("*.h5")]
-    data_files.sort()
-
-    for filepath in data_files:
-        try:
-            file_date = filepath.name[-11:-3]
-            file_date = f'{file_date}T00:00:00Z'
-
-            if file_date < start_time or file_date > end_time:
-                continue
-
-            print(f'Moving {file_date}')
-            file_date = file_date.replace(':', '')
-
-            year = file_date[:4]
-
-            output_dir = target_dir / year
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            filename = f'{ds_name}_{file_date}.nc'
-            local_fp = output_dir / filename
-
-            shutil.move(filepath, local_fp)
-        except:
-            continue
-
+    print(target_dir)
     data_files = [filepath for filepath in target_dir.rglob("*.nc")]
     data_files.sort()
 
+    print(data_files)
+    exit()
+
     for filepath in data_files:
-        # CRYOSAT_2_20190117T144401Z
 
         date = filepath.name.split('_')[-1]
         date_start_str = f'{date[:4]}-{date[4:6]}-{date[6:11]}:{date[11:13]}:{date[13:16]}'
@@ -447,8 +425,6 @@ def harvester(config, output_path):
     # Setup variables from harvester_config.yaml
     # =====================================================
     ds_name = config['ds_name']
-    if ds_name == 'JASON_3':
-        return "Jason 3"
     shortname = config['original_dataset_short_name']
 
     target_dir = output_path / ds_name / 'harvested_granules'

@@ -30,8 +30,8 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 # Hardcoded output directory path for pipeline files
-# Leave blank to be prompted for an output directory
 OUTPUT_DIR = Path('/Users/marlis/Developer/SLI/sealevel_output/')
+
 if not Path.is_dir(OUTPUT_DIR):
     log.fatal('Missing output directory. Please fill in. Exiting.')
     exit()
@@ -244,6 +244,17 @@ def run_indexing(src_path, output_dir, reprocess):
     return updated
 
 
+def run_plot_generation(output_dir):
+    import plot_generation
+    plot_success = False
+    try:
+        plot_generation.main(output_dir)
+        log.info('Plot generation complete.')
+        plot_success = True
+    except Exception as e:
+        log.error(f'Plot generation failed: {e}')
+
+
 def run_txt_gen_and_post(OUTPUT_DIR):
     import txt_engine
     import upload_indicators
@@ -363,18 +374,20 @@ if __name__ == '__main__':
             run_cycle_creation([CHOSEN_DS], OUTPUT_DIR, REPROCESS)
         if 'regrid' in wanted_steps:
             run_cycle_regridding(OUTPUT_DIR, REPROCESS)
-            # run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
+            # run_indexing(OUTPUT_DIR, REPROCESS)
         if wanted_steps == 'all':
             run_harvester([CHOSEN_DS], OUTPUT_DIR)
             run_cycle_creation([CHOSEN_DS], OUTPUT_DIR, REPROCESS)
             run_cycle_regridding(OUTPUT_DIR, REPROCESS)
-            # run_indexing(PATH_TO_SRC, OUTPUT_DIR, REPROCESS)
+            run_indexing(OUTPUT_DIR, REPROCESS)
 
     elif CHOSEN_OPTION == '6':
         if run_indexing(OUTPUT_DIR, REPROCESS):
-            run_txt_gen_and_post(OUTPUT_DIR)
+            run_plot_generation(OUTPUT_DIR)
+            # run_txt_gen_and_post(OUTPUT_DIR)
 
     elif CHOSEN_OPTION == '7':
-        run_txt_gen_and_post(OUTPUT_DIR)
+        pass
+        # run_txt_gen_and_post(OUTPUT_DIR)
 
     print_statuses()

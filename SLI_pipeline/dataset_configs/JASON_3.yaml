@@ -1,7 +1,7 @@
 # =====================================================
 # Harvester
 # =====================================================
-harvester_type: "local"
+harvester_type: "PODAAC Drive"
 start: "20160101T00:00:00Z" # yyyymmddThh:mm:ssZ
 end: "20181231T23:59:59Z" # yyyymmddThh:mm:ssZ
 most_recent: True # Overrides end date to be current date at time of execution
@@ -10,7 +10,7 @@ date_regex: "%Y-%m-%dT%H:%M:%SZ" # does not change
 # =====================================================
 # Dataset
 # =====================================================
-ds_name: "JASON_3_again" # Name for dataset
+ds_name: "JASON_3" # Name for dataset
 
 # new_data_attrs:
 original_dataset_title: JASON 3
