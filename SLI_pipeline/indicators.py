@@ -1,7 +1,6 @@
 """
 
 """
-import hashlib
 import logging
 import warnings
 from datetime import datetime
@@ -9,73 +8,20 @@ from pathlib import Path
 
 import numpy as np
 import pyresample as pr
-import requests
 import xarray as xr
 from netCDF4 import default_fillvals
 from pyresample.utils import check_and_wrap
 from scipy.optimize import leastsq
 
+from utils import file_utils, solr_utils
+
+
+logs_path = 'SLI_pipeline/logs/'
+logging.config.fileConfig(f'{logs_path}/log.ini',
+                          disable_existing_loggers=False)
 log = logging.getLogger(__name__)
-log.setLevel(logging.ERROR)
 
 warnings.filterwarnings("ignore")
-
-
-def md5(fname):
-    """
-    Creates md5 checksum from file
-    """
-    hash_md5 = hashlib.md5()
-    with open(fname, 'rb') as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
-
-
-def solr_query(config, fq, sort='date_dt asc'):
-    """
-    Queries Solr database using the filter query passed in.
-
-    Params:
-        config (dict): the dataset specific config file
-        fq (List[str]): the list of filter query arguments
-
-    Returns:
-        response.json()['response']['docs'] (List[dict]): the Solr docs that satisfy the query
-    """
-
-    solr_host = config['solr_host_local']
-    solr_collection_name = config['solr_collection_name']
-
-    query_params = {'q': '*:*',
-                    'fq': fq,
-                    'rows': 300000,
-                    'sort': sort}
-
-    url = f'{solr_host}{solr_collection_name}/select?'
-    response = requests.get(url, params=query_params)
-    return response.json()['response']['docs']
-
-
-def solr_update(config, update_body):
-    """
-    Updates Solr database with list of docs. If a doc contains an existing id field,
-    Solr will update or replace that existing doc with the new doc.
-
-    Params:
-        config (dict): the dataset specific config file
-        update_body (List[dict]): the list of docs to update on Solr
-
-    Returns:
-        requests.post(url, json=update_body) (Response): the Response object from the post call
-    """
-
-    solr_host = config['solr_host_local']
-    solr_collection_name = config['solr_collection_name']
-
-    url = f'{solr_host}{solr_collection_name}/update?commit=true'
-
-    return requests.post(url, json=update_body)
 
 
 def calc_linear_trend(ref_dir, cycle_ds):
@@ -277,28 +223,16 @@ def concat_files(indicator_dir, type, pattern):
     return concat_ds
 
 
-def indicators(config, output_path, reprocess, log_time):
+def indicators(output_path, reprocess):
     """
     This function calculates indicator values for each regridded cycle. Those are
     saved locally to avoid overloading memory. All locally saved indicator files 
     are combined into a single netcdf spanning the entire 1992 - NOW time period.
     """
 
-    # Set file handler for log using output_path
-    formatter = logging.Formatter('%(asctime)s:  %(message)s')
-
-    logs_path = Path(output_path / f'logs/{log_time}')
-    logs_path.mkdir(parents=True, exist_ok=True)
-
-    file_handler = logging.FileHandler(logs_path / 'indicator.log')
-    file_handler.setLevel(logging.ERROR)
-    file_handler.setFormatter(formatter)
-
-    log.addHandler(file_handler)
-
     # Query for indicator doc on Solr
     fq = ['type_s:indicator']
-    indicator_query = solr_query(config, fq)
+    indicator_query = solr_utils.solr_query(fq)
     update = len(indicator_query) == 1
 
     if not update or reprocess:
@@ -312,7 +246,7 @@ def indicators(config, output_path, reprocess, log_time):
           f'processing_time_dt:[{modified_time} TO NOW]',
           f'combination_s:(*DAILY* OR *1812*)']
 
-    updated_cycles = solr_query(config, fq, sort='start_date_dt asc')
+    updated_cycles = solr_utils.solr_query(fq, sort='start_date_dt asc')
 
     # ONLY PROCEED IF THERE ARE CYCLES NEEDING CALCULATING
     if not updated_cycles:
@@ -530,7 +464,7 @@ def indicators(config, output_path, reprocess, log_time):
         'modified_time_dt': chk_time,
         'indicator_filename_s': 'indicators.nc',
         'indicator_filepath_s': str(indicator_filepath),
-        'indicator_checksum_s': md5(indicator_filepath),
+        'indicator_checksum_s': file_utils.md5(indicator_filepath),
         'indicator_file_size_l': indicator_filepath.stat().st_size
     }
 
@@ -538,7 +472,7 @@ def indicators(config, output_path, reprocess, log_time):
         indicator_meta['id'] = indicator_query[0]['id']
 
     # Update Solr with dataset metadata
-    resp = solr_update(config, [indicator_meta])
+    resp = solr_utils.solr_update([indicator_meta], r=True)
 
     if resp.status_code == 200:
         status = 'Successfully created or updated Solr index document'

@@ -33,6 +33,7 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 OUTPUT_DIR = Path('/Users/marlis/Developer/SLI/sealevel_output/')
 
 if not Path.is_dir(OUTPUT_DIR):
+    print('Missing output directory. Please fill in. Exiting.')
     log.fatal('Missing output directory. Please fill in. Exiting.')
     exit()
 print(f'\nUsing output directory: {OUTPUT_DIR}')
@@ -207,12 +208,11 @@ def run_cycle_regridding(output_dir, reprocess):
     print(ROW)
 
 
-def run_indexing(src_path, output_dir, reprocess):
+def run_indexing(output_dir, reprocess):
     """
         Calls the indicator processing file.
 
         Parameters:
-            src_path (Path): The path to the src directory.
             output_dir (Path): The path to the output directory.
             reprocess: Boolean to force reprocessing
     """
@@ -220,28 +220,26 @@ def run_indexing(src_path, output_dir, reprocess):
     print(' \033[36mRunning index calculations\033[0m '.center(66, '='))
     print(ROW + '\n')
 
-    updated = False
+    success = False
 
     try:
         print('\033[93mRunning index calculation\033[0m')
         print(ROW)
 
-        config_path = Path(
-            src_path/'processors/indicators/indicators_config.yaml')
-        with open(config_path, "r") as stream:
-            config = yaml.load(stream, yaml.Loader)
-
-        updated = indicators(config, output_dir, reprocess)
-
+        status = indicators(output_dir, reprocess)
+        ds_status['indicators'].append(status)
         log.info('Index calculation complete.')
         print('\033[92mIndex calculation successful\033[0m')
+        success = True
     except Exception as e:
         print(e)
+        ds_status['indicators'].append(
+            'Indicator calculation encountered error.')
         log.error(f'Index calculation failed: {e}')
         print('\033[91mIndex calculation failed\033[0m')
     print(ROW)
 
-    return updated
+    return success
 
 
 def run_plot_generation(output_dir):
@@ -374,7 +372,6 @@ if __name__ == '__main__':
             run_cycle_creation([CHOSEN_DS], OUTPUT_DIR, REPROCESS)
         if 'regrid' in wanted_steps:
             run_cycle_regridding(OUTPUT_DIR, REPROCESS)
-            # run_indexing(OUTPUT_DIR, REPROCESS)
         if wanted_steps == 'all':
             run_harvester([CHOSEN_DS], OUTPUT_DIR)
             run_cycle_creation([CHOSEN_DS], OUTPUT_DIR, REPROCESS)

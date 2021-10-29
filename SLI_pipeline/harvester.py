@@ -209,13 +209,13 @@ def podaac_drive_harvester(config, docs, target_dir):
 
     entries_for_solr = []
 
-    with open(Path(f'{Path(__file__).resolve().parent}/earthdata_login.yaml'), "r") as stream:
+    with open(Path(f'{Path(__file__).resolve().parent}/login.yaml'), "r") as stream:
         earthdata_login = yaml.load(stream, yaml.Loader)
 
     webdav_options = {
         'webdav_hostname': 'https://podaac-tools.jpl.nasa.gov/drive-r/files/merged_alt/shared/L2/int',
-        'webdav_login': earthdata_login['user'],
-        'webdav_password': earthdata_login['password'],
+        'webdav_login': earthdata_login['ed_user'],
+        'webdav_password': earthdata_login['ed_password'],
         'disable_check': True
     }
 
@@ -240,6 +240,7 @@ def podaac_drive_harvester(config, docs, target_dir):
     for year in ds_years:
         files = client.list(f'{webdav_ds_name}/{year}', get_info=True)[1:]
         files = [f for f in files if 'md5' not in f['path']]
+        files.sort()
         files = filter(date_filter, files)
 
         for f in files:

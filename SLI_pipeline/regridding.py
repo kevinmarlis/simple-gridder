@@ -425,7 +425,7 @@ def regridding(output_dir, reprocess):
         existing_regridded_at_cycles[start_date_key] = cycle
 
     # Start with J3 cycles
-    fq = ['type_s:cycle', 'processing_success_b:true', 'dataset_s:JASON_3_again']
+    fq = ['type_s:cycle', 'processing_success_b:true', 'dataset_s:JASON_3']
     j3_cycles = solr_utils.solr_query(fq, 'date_dt asc')
 
     for j3_cycle in j3_cycles:
@@ -473,15 +473,15 @@ def regridding(output_dir, reprocess):
                     for s3 in s3_cycles:
                         s3_ds = xr.open_dataset(s3['filepath_s'])
 
-                        try:
-                            s3_slice_ds = s3_ds.sel(
-                                time=slice(j3_start, j3_end))
-                        except:
+                        if j3_start[-1] == 'Z':
                             temp_start = j3_start[:-1]
                             temp_end = j3_end[:-1]
+                        else:
+                            temp_start = j3_start
+                            temp_end = j3_end
 
-                            s3_slice_ds = s3_ds.sel(
-                                time=slice(temp_start, temp_end))
+                        s3_slice_ds = s3_ds.sel(
+                            time=slice(temp_start, temp_end))
 
                         s3_data.append(s3_slice_ds)
 
@@ -515,7 +515,7 @@ def regridding(output_dir, reprocess):
                 processing_success = True
             except Exception as e:
                 log.exception(
-                    f'\nError while processing cycle {date}. {e}')
+                    f'\nError while processing cycle {j3_start}. {e}')
                 filename = ''
                 global_fp = ''
                 checksum = ''
@@ -539,8 +539,8 @@ def regridding(output_dir, reprocess):
             item['processing_version_f'] = version
             item['original_data_type_s'] = j3_cycle['data_type_s']
 
-            if date in existing_regridded_at_cycles.keys():
-                item['id'] = existing_regridded_at_cycles[date][0]['id']
+            if j3_cycle['start_date_dt'][:10] in existing_regridded_at_cycles.keys():
+                item['id'] = existing_regridded_at_cycles[j3_cycle['start_date_dt'][:10]]['id']
             resp = solr_utils.solr_update([item], True)
             if resp.status_code == 200:
                 print(

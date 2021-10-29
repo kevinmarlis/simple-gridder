@@ -240,7 +240,7 @@ def collect_granules(ds_name, dates, date_strs):
 
     # Get granules within start_date and end_date
     else:
-        cycle_granules = solr_utils.solr_query(fq)
+        cycle_granules = solr_utils.solr_query(fq, sort='date_dt asc')
 
     return cycle_granules
 

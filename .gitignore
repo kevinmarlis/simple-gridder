@@ -9,14 +9,14 @@
 *.png
 
 # sensitive files
-*earthdata_login.yaml
-*ftp_login.yaml
+*login.yaml
 
 # factors pickled files
 *_factors
 
 # test files
 *test*
+plotting.py
 
 # Editors
 .vscode/

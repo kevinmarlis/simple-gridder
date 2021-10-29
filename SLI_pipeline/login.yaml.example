@@ -1,5 +1,5 @@
 ed_user: username
-ed_password: password
+ed_password: password #PODAAC Drive API password
 
 ftp_host: ip address
 ftp_username: username
