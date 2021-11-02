@@ -1,12 +1,6 @@
 # Dataset Configs
 
-Directory containing config files for harvesting and processing datasets. Subdirectories exist per dataset and should follow this convention:
-
-### |-- DATASET_NAME
-### &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|-- harvester_config.yaml
-### &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|-- processing_config.yaml
-
-&nbsp;
+Directory containing config files per dataset. 
 ___
 
 ## harvester_config.yaml

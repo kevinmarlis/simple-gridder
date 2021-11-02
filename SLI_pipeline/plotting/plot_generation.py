@@ -21,7 +21,6 @@ def generate_plots(output_dir, ind_path):
         plt.title(var)
         plt.legend()
         plt.gcf().autofmt_xdate()
-        # plt.show()
         plt.savefig(f'{output_path}/{var}.png')
         plt.cla()
 

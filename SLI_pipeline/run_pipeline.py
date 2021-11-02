@@ -15,6 +15,7 @@ from cycle_creation import cycle_creation
 from harvester import harvester
 from indicators import indicators
 from regridding import regridding
+from plotting import plot_generation
 from utils import solr_utils
 
 RUN_TIME = datetime.now()
@@ -42,8 +43,9 @@ print(f'\nUsing output directory: {OUTPUT_DIR}')
 try:
     solr_utils.ping_solr()
 except requests.ConnectionError:
+    print('Solr is not currently running! Start Solr and try again.')
     log.fatal('Solr is not currently running! Start Solr and try again.')
-    exit()
+    # exit()
 
 ds_status = defaultdict(list)
 
@@ -242,7 +244,6 @@ def run_indexing(output_dir, reprocess):
 
 
 def run_plot_generation(output_dir):
-    import plot_generation
     plot_success = False
     try:
         plot_generation.main(output_dir)
@@ -384,7 +385,6 @@ if __name__ == '__main__':
 
     elif CHOSEN_OPTION == '7':
         run_plot_generation(OUTPUT_DIR)
-        pass
         # run_txt_gen_and_post(OUTPUT_DIR)
 
     print_statuses()
