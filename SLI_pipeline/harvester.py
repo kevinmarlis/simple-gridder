@@ -240,7 +240,7 @@ def podaac_drive_harvester(config, docs, target_dir):
     for year in ds_years:
         files = client.list(f'{webdav_ds_name}/{year}', get_info=True)[1:]
         files = [f for f in files if 'md5' not in f['path']]
-        files.sort()
+        files.sort(key=lambda f: f['path'])
         files = filter(date_filter, files)
 
         for f in files:

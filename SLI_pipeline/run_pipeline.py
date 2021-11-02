@@ -13,7 +13,7 @@ import yaml
 
 from cycle_creation import cycle_creation
 from harvester import harvester
-import indicators
+from indicators import indicators
 from regridding import regridding
 from utils import solr_utils
 
@@ -226,17 +226,16 @@ def run_indexing(output_dir, reprocess):
         print('\033[93mRunning index calculation\033[0m')
         print(ROW)
 
-        status = indicators(output_dir, reprocess)
-        ds_status['indicators'].append(status)
+        success = indicators(output_dir, reprocess)
+        msg = 'Indicator calculation successful.'
         log.info('Index calculation complete.')
         print('\033[92mIndex calculation successful\033[0m')
-        success = True
     except Exception as e:
         print(e)
-        ds_status['indicators'].append(
-            'Indicator calculation encountered error.')
+        msg = 'Indicator calculation encountered error.'
         log.error(f'Index calculation failed: {e}')
         print('\033[91mIndex calculation failed\033[0m')
+    ds_status['indicators'].append(msg)
     print(ROW)
 
     return success
@@ -384,6 +383,7 @@ if __name__ == '__main__':
             # run_txt_gen_and_post(OUTPUT_DIR)
 
     elif CHOSEN_OPTION == '7':
+        run_plot_generation(OUTPUT_DIR)
         pass
         # run_txt_gen_and_post(OUTPUT_DIR)
 

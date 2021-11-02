@@ -270,7 +270,7 @@ def indicators(output_path, reprocess):
     ann_cyc_in_pattern = dict()
     pattern_area_defs = dict()
 
-    ref_dir = Path().resolve() / 'SLI-pipeline/ref_files'
+    ref_dir = Path().resolve() / 'SLI_pipeline/ref_files'
 
     # Global grid
     ecco_fname = 'GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'
