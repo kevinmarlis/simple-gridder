@@ -112,6 +112,15 @@ def process_along_track(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
             'comment': 'Sea level determined from satellite altitude - range - all altimetric corrections',
         }
 
+        # Check for duplicate time values. Drop if they are true duplicates
+        all_times = ds.time.values
+        seen = set()
+        seen_add = seen.add
+        seen_twice = list(x for x in all_times if x in seen or seen_add(x))
+        if seen_twice:
+            _, index = np.unique(ds['time'], return_index=True)
+            ds = ds.isel(time=index)
+
         granules.append(ds)
 
     print('\tMerging granules...')
