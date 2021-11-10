@@ -424,7 +424,106 @@ def regridding(output_dir, reprocess):
         start_date_key = cycle['start_date_dt'][:10]
         existing_regridded_at_cycles[start_date_key] = cycle
 
-    # Start with J3 cycles
+    # Do all along track cycles prior to Jason 3 data (J3 gets combined with S3B)
+    fq = ['type_s:cycle', 'processing_success_b:true', 'data_type_s:"along track"',
+          '-dataset_s:JASON_3', '-dataset_s:SENTINEL_3B']
+    along_track_cycles = solr_utils.solr_query(fq, 'start_date_dt asc')
+
+    # Group cycles by date
+    # Allows us to merge cycles of different datasets at points of handoff
+    cycles_by_date = defaultdict(list)
+    for at_cycle in along_track_cycles:
+        start = at_cycle['start_date_dt'][:10]
+        cycles_by_date[start].append(at_cycle)
+
+    for date, cycle_list in cycles_by_date.items():
+        at_cycles = [xr.open_dataset(c['filepath_s']) for c in cycle_list]
+
+        update = False
+
+        if date in existing_regridded_at_cycles.keys():
+            existing_regrid_meta = existing_regridded_at_cycles[date]
+
+            # Determine if cycles have been updated
+            for c in cycle_list:
+                if c['processing_time_dt'] > existing_regrid_meta['processing_time_dt']:
+                    update = True
+
+            if not existing_regrid_meta['processing_success_b']:
+                update = True
+        else:
+            update = True
+
+        if not update:
+            print(f'\tNo updates to regridded DAILY cycle {date}')
+        else:
+
+            print(f'Regridding DAILY cycle {date}')
+            try:
+                # Merge cycles if needed
+                if len(cycle_list) > 1:
+                    all_data = []
+                    for c in at_cycles:
+                        slice_ds = c.sel(time=slice(
+                            cycle_list[0]['start_date_dt'][:10], cycle_list[0]['end_date_dt'][:10]))
+                        all_data.append(slice_ds)
+                    cycle_ds = xr.concat(all_data, 'time')
+                    cycle_ds = cycle_ds.sortby('time')
+                else:
+                    cycle_ds = at_cycles[0]
+
+                regridded_ds = regridder(
+                    cycle_ds, 'along_track', output_dir, ats=at_cycles)
+
+                regrid_dir = output_dir / 'regridded_cycles/DAILY'
+                regrid_dir.mkdir(parents=True, exist_ok=True)
+
+                filename = f'ssha_global_half_deg_{date.replace("-", "")}.nc'
+                global_fp = regrid_dir / filename
+                encoding = cycle_ds_encoding(regridded_ds)
+
+                regridded_ds.to_netcdf(global_fp, encoding=encoding)
+
+                # Determine checksum and file size
+                checksum = file_utils.md5(global_fp)
+                file_size = global_fp.stat().st_size
+                processing_success = True
+            except Exception as e:
+                log.exception(
+                    f'\nError while processing cycle {date}. {e}')
+                filename = ''
+                global_fp = ''
+                checksum = ''
+                file_size = 0
+                processing_success = False
+
+            item = {}
+            item['type_s'] = 'regridded_cycle'
+            item['combination_s'] = 'DAILY'
+            item['start_date_dt'] = cycle_list[0]['start_date_dt']
+            item['center_date_dt'] = cycle_list[0]['center_date_dt']
+            item['end_date_dt'] = cycle_list[0]['end_date_dt']
+            item['cycle_length_i'] = cycle_list[0]['cycle_length_i']
+            item['filename_s'] = filename
+            item['filepath_s'] = str(global_fp)
+            item['checksum_s'] = checksum
+            item['file_size_l'] = file_size
+            item['processing_success_b'] = processing_success
+            item['processing_time_dt'] = datetime.utcnow().strftime(
+                date_regex)
+            item['processing_version_f'] = version
+            item['original_data_type_s'] = cycle_list[0]['data_type_s']
+
+            if date in existing_regridded_at_cycles.keys():
+                item['id'] = existing_regridded_at_cycles[date]['id']
+            resp = solr_utils.solr_update([item], True)
+            if resp.status_code == 200:
+                print(
+                    '\tSuccessfully created or updated Solr cycle documents')
+            else:
+                print('\tFailed to create Solr cycle documents')
+
+    # # Start with J3 cycles
     fq = ['type_s:cycle', 'processing_success_b:true', 'dataset_s:JASON_3']
     j3_cycles = solr_utils.solr_query(fq, 'date_dt asc')
 

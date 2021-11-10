@@ -10,6 +10,8 @@ from pathlib import Path
 
 import requests
 import yaml
+from webdav3.client import Client
+from matplotlib import pyplot as plt
 
 from cycle_creation import cycle_creation
 from harvester import harvester
@@ -29,6 +31,8 @@ logging.config.fileConfig(f'{logs_path}/log.ini',
 log = logging.getLogger(__name__)
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("webdav3").setLevel(logging.WARNING)
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
 
 # Hardcoded output directory path for pipeline files
 OUTPUT_DIR = Path('/Users/marlis/Developer/SLI/sealevel_output/')

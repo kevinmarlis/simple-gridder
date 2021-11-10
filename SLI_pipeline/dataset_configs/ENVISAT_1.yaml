@@ -2,24 +2,24 @@
 # Harvester
 # =====================================================
 harvester_type: "PODAAC Drive"
-start: "20160224T00:00:00Z" # yyyymmddThh:mm:ssZ
-end: "20181231T23:59:59Z" # yyyymmddThh:mm:ssZ
-most_recent: True # Overrides end date to be current date at time of execution
+start: "20020524T00:00:00Z" # yyyymmddThh:mm:ssZ
+end: "20111231T23:59:59Z" # yyyymmddThh:mm:ssZ
+most_recent: False # Overrides end date to be current date at time of execution
 date_regex: "%Y-%m-%dT%H:%M:%SZ" # does not change
 
 # =====================================================
 # Dataset
 # =====================================================
-ds_name: "JASON_3" # Name for dataset
+ds_name: "ENVISAT_1" # Name for dataset
 
 # new_data_attrs:
-original_dataset_title: JASON 3
-original_dataset_short_name: JASON 3
+original_dataset_title: ENVISAT 1
+original_dataset_short_name: ENVISAT 1
 original_dataset_url: "N/A"
 original_dataset_reference: "N/A"
 original_dataset_doi: "Not Registered"
 
 # Processing
 version: 1.0
-cycle_length: 10
+cycle_length: 30
 data_type: "along track"
