@@ -196,16 +196,18 @@ def concat_files(indicator_dir, type, pattern):
     measures_path = indicator_dir / f'MEASURES_1812/cycle_{type}s' / pattern
     measures_files = [x for x in measures_path.glob('*.nc') if x.is_file()]
     measures_files.sort()
-    last_measures_date = str(measures_files[-1].name)[:10]
+    # last_measures_date = str(measures_files[-1].name)[:10]
 
     # Glob DAILY indicators
     # This is where we prefer MEASURES over DAILY
     daily_path = indicator_dir / f'DAILY/cycle_{type}s' / pattern
-    daily_files = [x for x in daily_path.glob(
-        '*.nc') if x.is_file() and str(x.name[:10]) > last_measures_date]
+    # daily_files = [x for x in daily_path.glob(
+    #     '*.nc') if x.is_file() and str(x.name[:10]) > last_measures_date]
+    daily_files = [x for x in daily_path.glob('*.nc') if x.is_file()]
     daily_files.sort()
 
-    files = measures_files + daily_files
+    # files = measures_files + daily_files
+    files = daily_files
 
     if pattern:
         print(f' - Reading {pattern} files')
