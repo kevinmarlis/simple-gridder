@@ -388,7 +388,7 @@ if __name__ == '__main__':
             # run_txt_gen_and_post(OUTPUT_DIR)
 
     elif CHOSEN_OPTION == '7':
-        run_plot_generation(OUTPUT_DIR)
-        # run_txt_gen_and_post(OUTPUT_DIR)
+        # run_plot_generation(OUTPUT_DIR)
+        run_txt_gen_and_post(OUTPUT_DIR)
 
     print_statuses()
