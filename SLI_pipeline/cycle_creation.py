@@ -5,6 +5,7 @@ import logging
 import warnings
 from datetime import datetime, timedelta
 
+import h5py
 import numpy as np
 import xarray as xr
 from netCDF4 import default_fillvals  # pylint: disable=no-name-in-module
@@ -39,55 +40,22 @@ def process_along_track(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
 
     for granule in cycle_granules:
         # along track data is in hdf5 format and uses groups
-        try:
-            ds = xr.open_dataset(granule['granule_file_path_s'], group='data')
-            ds = ds.rename(
-                {'lats': 'latitude', 'lons': 'longitude', 'ssh': 'SSHA'})
-            ds = ds[['SSHA', 'latitude', 'longitude', 'time']]
-            dim = ds.SSHA.dims[0]
-            ds = ds.swap_dims({dim: 'time'})
+        ds = xr.open_dataset(granule['granule_file_path_s'], group='data')
+        ds = xr.Dataset(
+            data_vars=dict(
+                SSHA=(['time'], ds.ssh.values),
+                latitude=(['time'], ds.lats.values),
+                longitude=(['time'], ds.lons.values),
+                time=(['time'], ds.time.values)
+            )
+        )
 
-            ds.time.attrs = {
-                'long_name': 'time',
-                'standard_name': 'time',
-                'units': 'seconds since 1985-01-01',
-                'calendar': 'gregorian',
-            }
-
-        # GSFC data is in netcdf format and doesn't use groups
-        except:
-            ds = xr.open_dataset(granule['granule_file_path_s'])
-
-            if 'ssha' in ds.data_vars:
-                var = 'ssha'
-            elif 'sla' in ds.data_vars:
-                var = 'sla'
-            elif 'sla_mle3' in ds.data_vars:
-                var = 'sla_mle3'
-
-            ds = ds.rename(
-                {'lat': 'latitude', 'lon': 'longitude', var: 'SSHA'})
-
-            if 'time_rel_eq' in ds.data_vars:
-                eq_dt = datetime.strptime(
-                    ds.attrs['equator_time'], '%Y-%m-%d %H:%M:%S.%f')
-
-                adjusted_times = [eq_dt + timedelta(seconds=time)
-                                  for time in ds.time_rel_eq.values]
-                ds = ds.assign_coords(time=('time', adjusted_times))
-
-                ds.time.attrs = {
-                    'long_name': 'time',
-                    'standard_name': 'time',
-                }
-
-            if granule['dataset_s'] == 'GSFC':
-                ds = ds.swap_dims({'N_Records': 'time'})
-
-                #  Convert to meters
-                ds['SSHA'] = ds['SSHA'] / 1e3
-
-            ds = ds[['SSHA', 'latitude', 'longitude', 'time']]
+        ds.time.attrs = {
+            'long_name': 'time',
+            'standard_name': 'time',
+            'units': 'seconds since 1985-01-01',
+            'calendar': 'gregorian',
+        }
 
         ds.latitude.attrs = {
             'long_name': 'latitude',
@@ -134,6 +102,7 @@ def process_along_track(cycle_granules, ds_meta, dates, CYCLE_LENGTH):
         'comment': f'Data aggregated into {CYCLE_LENGTH} day cycle periods.',
         'cycle_period': f'{dates[0]} to {dates[2]}',
         'cycle_length': CYCLE_LENGTH,
+        'granules_in_cycle': len(granules),
         'cycle_start': dates[0],
         'cycle_center': dates[1],
         'cycle_end': dates[2],
@@ -454,6 +423,13 @@ def cycle_creation(config, output_path, reprocess):
         # Skip cycle if no granules harvested
         if not cycle_granules:
             print(f'No granules for cycle {start_date_str} to {end_date_str}')
+            start_date = end_date
+            end_date = start_date + delta
+            continue
+
+        # Skip cycle if not complete global coverage
+        if len(cycle_granules) != CYCLE_LENGTH:
+            print(f'Incomplete cycle {start_date_str} to {end_date_str}')
             start_date = end_date
             end_date = start_date + delta
             continue
