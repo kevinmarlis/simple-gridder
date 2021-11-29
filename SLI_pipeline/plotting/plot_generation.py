@@ -7,7 +7,6 @@ from matplotlib import pyplot as plt
 
 def generate_plots(output_dir, ind_path):
     vars = ['enso_index', 'pdo_index', 'iod_index', 'spatial_mean']
-    vars = ['spatial_mean']
     ds = xr.open_dataset(ind_path)
     end_time = ds.time.values[-1]
     start_time = end_time - np.timedelta64(365*5, 'D')
@@ -57,7 +56,7 @@ def generate_plots(output_dir, ind_path):
         plt.legend()
         plt.gcf().autofmt_xdate()
         plt.tight_layout()
-        plt.savefig(f'{var}.png', dpi=150)
+        plt.savefig(f'{output_path}/{var}.png', dpi=150)
         # plt.show()
         plt.cla()
 
@@ -66,8 +65,6 @@ def main(output_dir):
     print('Generating plots from indicators')
 
     ind_path = output_dir / 'indicator/indicators.nc'
-    # DELETE ME BELOW
-    ind_path = Path('/Users/marlis/Developer/SLI/indicators/indicators.nc')
 
     generate_plots(output_dir, ind_path)
 
