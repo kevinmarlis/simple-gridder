@@ -4,7 +4,6 @@ This module handles data granule harvesting for datasets hosted locally and on P
 
 import logging
 import logging.config
-import shutil
 from datetime import datetime
 from pathlib import Path
 from xml.etree.ElementTree import fromstring
@@ -200,7 +199,10 @@ def podaac_drive_harvester(config, docs, target_dir):
         source (str): PODAAC Restricted Drive url for the specific dataset
     """
     ds_name = config['ds_name']
-    webdav_ds_name = ds_name.lower().replace('_', '-') + '/'
+    if ds_name == 'MERGED_ALT':
+        webdav_ds_name = ds_name.lower() + '/'
+    else:
+        webdav_ds_name = ds_name.lower().replace('_', '-') + '/'
 
     now = datetime.utcnow()
     date_regex = config['date_regex']
