@@ -1,8 +1,18 @@
 from pathlib import Path
+import logging
+import logging.config
+import warnings
 import numpy as np
-from numpy.core.fromnumeric import size
 import xarray as xr
 from matplotlib import pyplot as plt
+from utils import solr_utils
+
+logs_path = 'SLI_pipeline/logs/'
+logging.config.fileConfig(f'{logs_path}/log.ini',
+                          disable_existing_loggers=False)
+log = logging.getLogger(__name__)
+
+warnings.filterwarnings("ignore")
 
 
 def generate_plots(output_dir, ind_path):
@@ -12,6 +22,14 @@ def generate_plots(output_dir, ind_path):
     start_time = end_time - np.timedelta64(365*5, 'D')
     pdo_start_time = end_time - np.timedelta64(365*10, 'D')
     spatial_start_time = end_time - np.timedelta64(365*7, 'D')
+
+    # Query solr to get previous indicator time
+    fq = ['type_s:indicator']
+    r = solr_utils.solr_query(fq)
+    if 'prior_end_dt' in r[0].keys():
+        slice_start = np.datetime64(r[0]['prior_end_dt'])
+    else:
+        slice_start = None
 
     for var in vars:
         output_path = output_dir / 'indicator/plots'
@@ -27,30 +45,30 @@ def generate_plots(output_dir, ind_path):
             var_ds = ds[var].sel(time=slice(start_time, end_time))
             delta = np.timedelta64(60, 'D')
 
-        slice_start = np.datetime64('2021-08-18T00:00:00.000000000')
-        var_slice_ds = ds[var].sel(time=slice(slice_start, end_time))
-
-        if 'spatial_mean' in var:
-            var_ds = var_ds * 100
-            var_slice_ds = var_slice_ds * 100
-
         plt.rcParams.update({'font.size': 16})
         plt.figure(figsize=(10, 5))
 
         if 'spatial_mean' not in var:
             plt.hlines(
                 y=0, xmin=var_ds.time[0]-delta, xmax=var_ds.time[-1]+delta, color='black', linestyle='-')
-            plt.plot(var_ds.time, var_ds, label='Indicator', linewidth=3)
-            plt.plot(var_slice_ds.time, var_slice_ds,
-                     label='New Indicator Data', linewidth=3)
-            max_val = max(max(var_ds.values), max(var_slice_ds.values))
+            max_val = max(var_ds.values)
             plt.ylim(0-max_val-.25, max_val+.25)
             plt.xlim(var_ds.time[0]-delta, var_ds.time[-1]+delta)
         else:
-            plt.plot(var_ds.time, var_ds, label='Indicator', linewidth=3)
+            var_ds = var_ds * 100
+            plt.ylabel('cm')
+
+        plt.plot(var_ds.time, var_ds, label='Indicator', linewidth=3)
+
+        if slice_start:
+            var_slice_ds = ds[var].sel(time=slice(slice_start, end_time))
+
+            if 'spatial_mean' in var:
+                var_slice_ds = var_slice_ds * 100
+
             plt.plot(var_slice_ds.time, var_slice_ds,
                      label='New Indicator Data', linewidth=3)
-            plt.ylabel('cm')
+
         plt.grid()
         plt.title(var)
         plt.legend()
@@ -62,7 +80,7 @@ def generate_plots(output_dir, ind_path):
 
 
 def main(output_dir):
-    print('Generating plots from indicators')
+    print('\nGenerating plots from indicators')
 
     ind_path = output_dir / 'indicator/indicators.nc'
 

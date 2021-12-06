@@ -5,7 +5,7 @@ import os
 
 
 def main(output_dir):
-    with open(f'{os.getcwd()}/SLI_pipeline/login.yaml', "r") as stream:
+    with open(f'{os.getcwd()}/SLI_pipeline/configs/login.yaml', "r") as stream:
         config = yaml.load(stream, yaml.Loader)
 
     data_path = output_dir / f'indicator/indicator_data.txt'

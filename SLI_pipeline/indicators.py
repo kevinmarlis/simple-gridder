@@ -5,6 +5,7 @@ import logging
 import warnings
 from datetime import datetime
 from pathlib import Path
+from shutil import copyfile
 
 import numpy as np
 import pyresample as pr
@@ -243,10 +244,14 @@ def indicators(output_path, reprocess):
         indicator_metadata = indicator_query[0]
         modified_time = indicator_metadata['modified_time_dt']
 
+        # Copy old indicator file as backup
+        indicator_path = indicator_metadata['indicator_filepath_s']
+        backup_path = f'{indicator_path.split(".")[0]}_backup.nc'
+        copyfile(indicator_path, backup_path)
+
     # Query for update cycles after modified_time
-    fq = ['type_s:regridded_cycle', 'processing_success_b:true',
-          f'processing_time_dt:[{modified_time} TO NOW]',
-          f'combination_s:(*DAILY* OR *1812*)']
+    fq = ['type_s:gridded_cycle', 'processing_success_b:true',
+          f'processing_time_dt:[{modified_time} TO NOW]']
 
     updated_cycles = solr_utils.solr_query(fq, sort='start_date_dt asc')
 
@@ -323,18 +328,17 @@ def indicators(output_path, reprocess):
     for cycle in updated_cycles:
         try:
             # Setup output directories (either MEASURES_1812 or DAILY)
-            regrid_combination = cycle['combination_s']
-            output_dir = output_path / 'indicator' / regrid_combination
+            output_dir = output_path / 'indicator' / 'daily'
             output_dir.mkdir(parents=True, exist_ok=True)
 
             cycle_ds = xr.open_dataset(cycle['filepath_s'])
             cycle_ds.close()
 
-            date = cycle['center_date_dt'][:10]
+            date = cycle['date_dt'][:10]
 
             print(f' - Calculating index values for {date}')
 
-            ct = np.datetime64(cycle_ds.cycle_center)
+            ct = np.datetime64(date)
 
             # Area mask the cycle data
             global_dam = cycle_ds.where(
@@ -471,6 +475,7 @@ def indicators(output_path, reprocess):
     }
 
     if update:
+        indicator_meta['prior_end_dt'] = indicator_query[0]['end_date_dt']
         indicator_meta['id'] = indicator_query[0]['id']
 
     # Update Solr with dataset metadata

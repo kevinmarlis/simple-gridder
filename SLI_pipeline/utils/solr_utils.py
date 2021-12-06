@@ -3,7 +3,7 @@ import requests
 from datetime import datetime
 
 SOLR_HOST = 'http://localhost:8983/solr/'
-SOLR_COLLECTION = 'sealevel_datasets'
+SOLR_COLLECTION = 'sli_dev'
 
 
 def solr_query(fq, sort=''):

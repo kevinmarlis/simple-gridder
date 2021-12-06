@@ -12,11 +12,11 @@ import requests
 import yaml
 from webdav3.client import Client
 from matplotlib import pyplot as plt
+import h5py
 
-from cycle_creation import cycle_creation
 from harvester import harvester
 from indicators import indicators
-from regridding import regridding
+from cycle_gridding import cycle_gridding
 from plotting import plot_generation
 from utils import solr_utils
 
@@ -33,9 +33,11 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("webdav3").setLevel(logging.WARNING)
 logging.getLogger("matplotlib").setLevel(logging.WARNING)
+logging.getLogger("h5py").setLevel(logging.WARNING)
 
 # Hardcoded output directory path for pipeline files
 OUTPUT_DIR = Path('/Users/marlis/Developer/SLI/sealevel_output/')
+OUTPUT_DIR = Path('/Users/marlis/Developer/SLI/dev_output/')
 
 if not Path.is_dir(OUTPUT_DIR):
     print('Missing output directory. Please fill in. Exiting.')
@@ -88,10 +90,9 @@ def show_menu():
         print(f'\n{" OPTIONS ":-^35}')
         print('1) Run pipeline on all')
         print('2) Harvest all datasets')
-        print('3) Update cycles for all datasets')
-        print('4) Regrid DAILY and MEASURES datasets')
+        print('3) Grid all datasets')
+        print('4) Calculate index values')
         print('5) Dataset input')
-        print('6) Calculate index values')
         selection = input('Enter option number: ')
 
         if selection in ['1', '2', '3', '4', '5', '6', '7']:
@@ -114,7 +115,7 @@ def print_statuses():
                 print(f'\t\033[91m{msg}\033[0m')
 
 
-def run_harvester(datasets, output_dir):
+def run_harvester(datasets, configs, output_dir):
     """
         Calls the harvester with the dataset specific config file path for each
         dataset in datasets.
@@ -131,12 +132,8 @@ def run_harvester(datasets, output_dir):
         try:
             print(f'\033[93mRunning harvester for {ds}\033[0m')
             print(ROW)
-
-            config_path = Path(f'SLI_pipeline/dataset_configs/{ds}.yaml')
-            with open(config_path, "r") as stream:
-                config = yaml.load(stream, yaml.Loader)
-
-            status = harvester(config, output_dir)
+            ds_config = configs[ds]
+            status = harvester(ds_config, output_dir)
             ds_status[ds].append(status)
             log.info(f'{ds} harvesting complete. {status}')
             print('\033[92mHarvest successful\033[0m')
@@ -149,68 +146,24 @@ def run_harvester(datasets, output_dir):
         print(ROW)
 
 
-def run_cycle_creation(datasets, output_dir, reprocess):
-    """
-        Calls the processor with the dataset specific config file path for each
-        dataset in datasets.
-
-        Parameters:
-            datasets (List[str]): A list of dataset names.
-            output_dir (Pathh): The path to the output directory.
-            reprocess: Boolean to force reprocessing
-    """
+def run_cycle_gridding(output_dir):
     print('\n' + ROW)
-    print(' \033[36mRunning cycle creation\033[0m '.center(66, '='))
-    print(ROW + '\n')
-
-    for ds in datasets:
-        try:
-            print(f'\033[93mRunning cycle creation for {ds}\033[0m')
-            print(ROW)
-
-            config_path = Path(f'SLI_pipeline/dataset_configs/{ds}.yaml')
-            with open(config_path, "r") as stream:
-                config = yaml.load(stream, yaml.Loader)
-
-            status = cycle_creation(config, output_dir, reprocess)
-            ds_status[ds].append(status)
-            log.info(f'{ds} cycle creation complete. {status}')
-            print('\033[92mCycle creation complete\033[0m')
-        except Exception as e:
-            ds_status[ds].append('Cycle creation encountered error.')
-            print(e)
-            log.exception(f'{ds} cycle creation failed. {e}')
-            print('\033[91mCycle creation failed\033[0m')
-        print(ROW)
-
-
-def run_cycle_regridding(output_dir, reprocess):
-    """
-        Calls the processor with the dataset specific config file path for each
-        dataset in datasets.
-
-        Parameters:
-            datasets (List[str]): A list of dataset names.
-            output_dir (Pathh): The path to the output directory.
-            reprocess: Boolean to force reprocessing
-    """
-    print('\n' + ROW)
-    print(' \033[36mRunning cycle regridding\033[0m '.center(66, '='))
+    print(' \033[36mRunning cycle gridding\033[0m '.center(66, '='))
     print(ROW + '\n')
 
     try:
-        print(f'\033[93mRunning cycle regridding\033[0m')
+        print(f'\033[93mRunning cycle gridding\033[0m')
         print(ROW)
 
-        status = regridding(output_dir, reprocess)
-        ds_status['regridding'].append(status)
-        log.info('Cycle regridding complete.')
-        print('\033[92mCycle regridding complete\033[0m')
+        status = cycle_gridding(output_dir)
+        ds_status['gridding'].append(status)
+        log.info('Cycle gridding complete.')
+        print('\033[92mCycle gridding complete\033[0m')
     except Exception as e:
-        ds_status['regridding'].append('Regridding encountered error.')
+        ds_status['gridding'].append('Gridding encountered error.')
         print(e)
-        log.exception(f'Cycle regridding failed. {e}')
-        print('\033[91mCycle regridding failed\033[0m')
+        log.exception(f'Cycle gridding failed. {e}')
+        print('\033[91mCycle gridding failed\033[0m')
     print(ROW)
 
 
@@ -251,9 +204,11 @@ def run_plot_generation(output_dir):
     plot_success = False
     try:
         plot_generation.main(output_dir)
-        log.info('Plot generation complete.')
+        ds_status['plot_generation'].append(
+            'Plot generation successfully completed.')
         plot_success = True
     except Exception as e:
+        ds_status['plot_generation'].append(f'Plot generation failed: {e}')
         log.error(f'Plot generation failed: {e}')
 
 
@@ -298,45 +253,45 @@ if __name__ == '__main__':
 
     # --------------------- Run pipeline ---------------------
 
-    DATASETS = [ds.name.replace('.yaml', '') for ds in Path(
-        'SLI_pipeline/dataset_configs').iterdir() if '.yaml' in ds.name]
+    config_path = Path(f'SLI_pipeline/configs/datasets.yaml')
+    with open(config_path, "r") as stream:
+        config = yaml.load(stream, yaml.Loader)
+    configs = {c['ds_name']: c for c in config}
 
-    DATASETS.sort()
+    DATASET_NAMES = list(configs.keys())
 
     CHOSEN_OPTION = show_menu() if args.options_menu and not REPROCESS else '1'
     # print('1) Run pipeline on all')
     # print('2) Harvest all datasets')
-    # print('3) Update cycles for all datasets')
-    # print('4) Regrid DAILY and MEASURES datasets')
+    # print('3) Grid all datasets')
+    # print('4) Calculate index values')
     # print('5) Dataset input')
-    # print('6) Calculate index values')
 
     # Run all
     if CHOSEN_OPTION == '1':
-        for dataset in DATASETS:
-            run_harvester([dataset], OUTPUT_DIR)
-            run_cycle_creation([dataset], OUTPUT_DIR, REPROCESS)
-        run_cycle_regridding(OUTPUT_DIR, REPROCESS)
+        for dataset in DATASET_NAMES:
+            run_harvester([dataset], configs, OUTPUT_DIR)
+        run_cycle_gridding(OUTPUT_DIR)
         if run_indexing(OUTPUT_DIR, REPROCESS):
             run_txt_gen_and_post()
 
     # Run harvesters
     elif CHOSEN_OPTION == '2':
-        for dataset in DATASETS:
-            run_harvester([dataset], OUTPUT_DIR)
+        for dataset in DATASET_NAMES:
+            run_harvester([dataset], configs, OUTPUT_DIR)
 
     # Run cycling
     elif CHOSEN_OPTION == '3':
-        for dataset in DATASETS:
-            run_cycle_creation([dataset], OUTPUT_DIR, REPROCESS)
+        run_cycle_gridding(OUTPUT_DIR)
 
-    # Run cycle regridding
     elif CHOSEN_OPTION == '4':
-        run_cycle_regridding(OUTPUT_DIR, REPROCESS)
+        if run_indexing(OUTPUT_DIR, REPROCESS):
+            run_plot_generation(OUTPUT_DIR)
+            # run_txt_gen_and_post(OUTPUT_DIR)
 
     # Select dataset and pipeline step(s)
     elif CHOSEN_OPTION == '5':
-        ds_dict = dict(enumerate(DATASETS, start=1))
+        ds_dict = dict(enumerate(DATASET_NAMES, start=1))
         while True:
             print('\nAvailable datasets:\n')
             for i, dataset in ds_dict.items():
@@ -344,7 +299,7 @@ if __name__ == '__main__':
 
             ds_index = input('\nEnter dataset number: ')
 
-            if not ds_index.isdigit() or int(ds_index) not in range(1, len(DATASETS)+1):
+            if not ds_index.isdigit() or int(ds_index) not in range(1, len(DATASET_NAMES)+1):
                 print(
                     f'Invalid dataset, "{ds_index}", please enter a valid selection')
             else:
@@ -353,7 +308,7 @@ if __name__ == '__main__':
         CHOSEN_DS = ds_dict[int(ds_index)]
         print(f'\nUsing {CHOSEN_DS} dataset')
 
-        STEPS = ['harvest', 'create cycles', 'regrid cycles', 'all']
+        STEPS = ['harvest']
         steps_dict = dict(enumerate(STEPS, start=1))
 
         while True:
@@ -371,24 +326,12 @@ if __name__ == '__main__':
         wanted_steps = steps_dict[int(steps_index)]
 
         if 'harvest' in wanted_steps:
-            run_harvester([CHOSEN_DS], OUTPUT_DIR)
-        if 'create' in wanted_steps:
-            run_cycle_creation([CHOSEN_DS], OUTPUT_DIR, REPROCESS)
-        if 'regrid' in wanted_steps:
-            run_cycle_regridding(OUTPUT_DIR, REPROCESS)
-        if wanted_steps == 'all':
-            run_harvester([CHOSEN_DS], OUTPUT_DIR)
-            run_cycle_creation([CHOSEN_DS], OUTPUT_DIR, REPROCESS)
-            run_cycle_regridding(OUTPUT_DIR, REPROCESS)
-            run_indexing(OUTPUT_DIR, REPROCESS)
-
+            run_harvester([CHOSEN_DS], configs, OUTPUT_DIR)
     elif CHOSEN_OPTION == '6':
-        if run_indexing(OUTPUT_DIR, REPROCESS):
-            run_plot_generation(OUTPUT_DIR)
-            # run_txt_gen_and_post(OUTPUT_DIR)
-
+        run_plot_generation(OUTPUT_DIR)
     elif CHOSEN_OPTION == '7':
         # run_plot_generation(OUTPUT_DIR)
-        run_txt_gen_and_post(OUTPUT_DIR)
+        # run_txt_gen_and_post(OUTPUT_DIR)
+        pass
 
     print_statuses()

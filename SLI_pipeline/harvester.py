@@ -52,7 +52,7 @@ def podaac_harvester(config, docs, target_dir):
     shortname = config['original_dataset_short_name']
 
     now = datetime.utcnow()
-    date_regex = config['date_regex']
+    date_regex = "%Y-%m-%dT%H:%M:%SZ"
     start_time = config['start']
     end_time = now.strftime(
         "%Y%m%dT%H:%M:%SZ") if config['most_recent'] else config['end']
@@ -205,14 +205,14 @@ def podaac_drive_harvester(config, docs, target_dir):
         webdav_ds_name = ds_name.lower().replace('_', '-') + '/'
 
     now = datetime.utcnow()
-    date_regex = config['date_regex']
+    date_regex = "%Y-%m-%dT%H:%M:%SZ"
     start_time = config['start']
     end_time = now.strftime(
         "%Y%m%dT%H:%M:%SZ") if config['most_recent'] else config['end']
 
     entries_for_solr = []
 
-    with open(Path(f'{Path(__file__).resolve().parent}/login.yaml'), "r") as stream:
+    with open(Path(f'{Path(__file__).resolve().parent}/configs/login.yaml'), "r") as stream:
         earthdata_login = yaml.load(stream, yaml.Loader)
 
     webdav_options = {
@@ -338,90 +338,6 @@ def podaac_drive_harvester(config, docs, target_dir):
     return entries_for_solr, f'{webdav_options["webdav_hostname"]}/{webdav_ds_name}'
 
 
-def local_harvester(config, docs, target_dir):
-    """
-    Harvests new or updated granules from a local drive for a specific dataset, within a
-    specific date range. Creates new or modifies granule docs for each harvested granule.
-
-    NOTE: Assumes data files are in expected directory structure:
-    - SLI_output
-        - {ds_name}
-            - harvested_granules
-                -{year}
-                    - {ds_name}_YYYYMMDDTHHMMSSZ
-
-    Params:
-        config (dict): the dataset specific config file
-        docs (dict): the existing granule docs on Solr in dict format
-        target_dir (Path): the path of the dataset's harvested granules directory
-    Returns:
-        entries_for_solr (List[dict]): all new or modified granule metadata docs to be posted to Solr
-        source (str): denotes granule/dataset was harvested from a local directory
-    """
-    ds_name = config['ds_name']
-    date_regex = config['date_regex']
-    source = 'Locally stored file'
-    now = datetime.utcnow()
-    now_str = now.strftime(date_regex)
-
-    start_time = config['start']
-    end_time = now.strftime(
-        "%Y%m%dT%H:%M:%SZ") if config['most_recent'] else config['end']
-
-    entries_for_solr = []
-    print(target_dir)
-    data_files = [filepath for filepath in target_dir.rglob("*.nc")]
-    data_files.sort()
-
-    print(data_files)
-    exit()
-
-    for filepath in data_files:
-
-        date = filepath.name.split('_')[-1]
-        date_start_str = f'{date[:4]}-{date[4:6]}-{date[6:11]}:{date[11:13]}:{date[13:16]}'
-
-        mod_time = datetime.fromtimestamp(filepath.stat().st_mtime)
-        mod_time_string = mod_time.strftime(date_regex)
-
-        filename = filepath.name
-
-        # Granule metadata used for Solr granule entries
-        item = {
-            'type_s': 'granule',
-            'date_dt': date_start_str,
-            'dataset_s': ds_name,
-            'filename_s': filename,
-            'source_s': source,
-            'modified_time_dt': mod_time_string
-        }
-
-        if filename in docs.keys():
-            item['id'] = docs[filename]['id']
-
-        # If granule doesn't exist or previously failed or has been updated since last harvest
-        updating = (filename not in docs.keys()) or \
-            (not docs[filename]['harvest_success_b']) or \
-            (docs[filename]['download_time_dt'] <= mod_time_string)
-
-        if updating:
-            print(f' - Adding {filename} to Solr.')
-
-            # Create checksum for file
-            item['checksum_s'] = md5(filepath)
-            item['granule_file_path_s'] = str(filepath)
-            item['harvest_success_b'] = True
-            item['file_size_l'] = filepath.stat().st_size
-            item['download_time_dt'] = now_str
-
-            entries_for_solr.append(item)
-
-        else:
-            print(f' - {filename} already up to date in Solr.')
-
-    return entries_for_solr, source
-
-
 def harvester(config, output_path):
     """
     Harvests new or updated granules from a local drive for a dataset. Posts granule metadata docs
@@ -437,9 +353,8 @@ def harvester(config, output_path):
     # Setup variables from harvester_config.yaml
     # =====================================================
     ds_name = config['ds_name']
-    shortname = config['original_dataset_short_name']
 
-    target_dir = output_path / ds_name / 'harvested_granules'
+    target_dir = output_path / 'datasets' / ds_name / 'harvested_granules'
     target_dir.mkdir(parents=True, exist_ok=True)
 
     print(f'Harvesting {ds_name} files to {target_dir}\n')
@@ -458,7 +373,7 @@ def harvester(config, output_path):
     if harvested_docs:
         docs = {doc['filename_s']: doc for doc in harvested_docs}
 
-    now_str = datetime.utcnow().strftime(config['date_regex'])
+    now_str = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Actual downloading and generation of granule docs for Solr
     if config['harvester_type'] == 'podaac':
@@ -517,16 +432,10 @@ def harvester(config, output_path):
         'dataset_s': ds_name,
         'start_date_dt': ds_start,
         'end_date_dt': ds_end,
-        'short_name_s': shortname,
         'source_s': source,
         'last_checked_dt': now_str,
         'last_download_dt': last_dl,
         'harvest_status_s': harvest_status,
-        'original_dataset_title_s': config['original_dataset_title'],
-        'original_dataset_short_name_s': shortname,
-        'original_dataset_url_s': config['original_dataset_url'],
-        'original_dataset_reference_s': config['original_dataset_reference'],
-        'original_dataset_doi_s': config['original_dataset_doi']
     }
 
     if dataset_query:
