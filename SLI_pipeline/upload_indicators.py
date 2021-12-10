@@ -1,7 +1,15 @@
+import logging
+import logging.config
+import os
+
+import yaml
 from paramiko import SSHClient
 from scp import SCPClient
-import yaml
-import os
+
+logs_path = 'SLI_pipeline/logs/'
+logging.config.fileConfig(f'{logs_path}/log.ini',
+                          disable_existing_loggers=False)
+log = logging.getLogger(__name__)
 
 
 def main(output_dir):
