@@ -30,12 +30,15 @@ def main(output_dir):
                     password=config['ftp_password'])
     except Exception as e:
         print(e)
+        log.error(f'Failed to connect to FTP. {e}')
         raise(f'FTP connection error. {e}')
 
     try:
         with SCPClient(ssh.get_transport()) as scp:
             scp.put(data_path, upload_path)
         print('Indicators successfully pushed to FTP')
+        log.debug('Indicators successfully pushed to FTP')
     except Exception as e:
         print(e)
+        log.error(f'Indicators failed to push to FTP. {e}')
         raise(f'Unable to upload file. {e}')
