@@ -165,7 +165,7 @@ def gridding(cycle_ds, date, sources):
 
         roi = 6e5  # 6e5
         sigma = 1e5
-        neighbours = 10  # 500 for production, 10 for development
+        neighbours = 500  # 500 for production, 10 for development
 
         new_vals = resample_gauss(ssha_grid, ssha_nn,
                                   global_swath_def,
@@ -193,7 +193,7 @@ def gridding(cycle_ds, date, sources):
     gridded_ds['mask'].attrs = {'long_name': 'wet/dry boolean mask for grid cell',
                                 'comment': '1 for ocean, otherwise 0'}
 
-    # gridded_ds['SSHA'].attrs = cycle_ds['SSHA'].attrs
+    gridded_ds['SSHA'].attrs = cycle_ds['SSHA'].attrs
     gridded_ds['SSHA'].attrs['valid_min'] = np.nanmin(
         gridded_ds['SSHA'].values)
     gridded_ds['SSHA'].attrs['valid_max'] = np.nanmax(
@@ -319,7 +319,7 @@ def cycle_gridding(output_dir):
             file_size = filepath.stat().st_size
             processing_success = True
         except Exception as e:
-            # log.exception(f'\nError while processing cycle {date}. {e}')
+            log.exception(f'\nError while processing cycle {date}. {e}')
             print(e)
             filename = ''
             filepath = ''
