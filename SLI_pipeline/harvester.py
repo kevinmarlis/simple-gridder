@@ -55,7 +55,7 @@ def podaac_harvester(config, docs, target_dir):
     date_regex = "%Y-%m-%dT%H:%M:%SZ"
     start_time = config['start']
     end_time = now.strftime(
-        "%Y%m%dT%H:%M:%SZ") if config['most_recent'] else config['end']
+        "%Y%m%dT%H:%M:%SZ") if config['end'] == 'now' else config['end']
 
     entries_for_solr = []
 
@@ -208,7 +208,7 @@ def podaac_drive_harvester(config, docs, target_dir):
     date_regex = "%Y-%m-%dT%H:%M:%SZ"
     start_time = config['start']
     end_time = now.strftime(
-        "%Y%m%dT%H:%M:%SZ") if config['most_recent'] else config['end']
+        "%Y%m%dT%H:%M:%SZ") if config['end'] == 'now' else config['end']
 
     entries_for_solr = []
 
@@ -381,8 +381,6 @@ def harvester(config, output_path):
     elif config['harvester_type'] == 'PODAAC Drive':
         entries_for_solr, source = podaac_drive_harvester(
             config, docs, target_dir)
-    elif config['harvester_type'] == 'local':
-        entries_for_solr, source = local_harvester(config, docs, target_dir)
 
     # Only update Solr harvested entries if there are fresh downloads
     if entries_for_solr:
