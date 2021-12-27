@@ -17,6 +17,9 @@ import h5py
 from harvester import harvester
 from indicators import indicators
 from cycle_gridding import cycle_gridding
+import txt_engine
+import upload_indicators
+
 from plotting import plot_generation
 from utils import solr_utils
 
@@ -50,8 +53,8 @@ try:
     solr_utils.ping_solr()
 except requests.ConnectionError:
     print('Solr is not currently running! Start Solr and try again.')
-    log.fatal('Solr is not currently running! Start Solr and try again.')
-    # exit()
+    log.critical('Solr is not currently running! Start Solr and try again.')
+    exit()
 
 ds_status = defaultdict(list)
 
@@ -90,9 +93,11 @@ def show_menu():
         print(f'\n{" OPTIONS ":-^35}')
         print('1) Run pipeline on all')
         print('2) Harvest all datasets')
-        print('3) Grid all datasets')
-        print('4) Calculate index values')
-        print('5) Dataset input')
+        print('3) Harvest single dataset')
+        print('4) Perform gridding')
+        print('5) Calculate index values and generate txt output and plots')
+        print('6) Generate txt output and plots')
+        print('7) Post indicators to FTP')
         selection = input('Enter option number: ')
 
         if selection in ['1', '2', '3', '4', '5', '6', '7']:
@@ -200,7 +205,7 @@ def run_indexing(output_dir, reprocess):
     return success
 
 
-def run_plot_generation(output_dir):
+def run_post_processing(output_dir):
     plot_success = False
     try:
         plot_generation.main(output_dir)
@@ -211,13 +216,6 @@ def run_plot_generation(output_dir):
         ds_status['plot_generation'].append(f'Plot generation failed: {e}')
         log.error(f'Plot generation failed: {e}')
 
-
-def run_txt_gen_and_post(OUTPUT_DIR):
-    import txt_engine
-    import upload_indicators
-
-    txt_success = False
-
     try:
         txt_engine.main(OUTPUT_DIR)
         log.info('Index txt file creation complete.')
@@ -225,14 +223,13 @@ def run_txt_gen_and_post(OUTPUT_DIR):
     except Exception as e:
         log.error(f'Index txt file creation failed: {e}')
 
-    if txt_success:
-        try:
-            upload_indicators.main(OUTPUT_DIR)
-            log.info('Index txt file upload complete.')
-        except Exception as e:
-            log.error(f'Index txt file upload failed: {e}')
-    else:
-        log.error('Txt file creation failed. Not attempting to upload file.')
+
+def post_to_ftp(OUTPUT_DIR):
+    try:
+        upload_indicators.main(OUTPUT_DIR)
+        log.info('Index txt file upload complete.')
+    except Exception as e:
+        log.error(f'Index txt file upload failed: {e}')
 
 
 if __name__ == '__main__':
@@ -267,30 +264,21 @@ if __name__ == '__main__':
     # print('4) Calculate index values')
     # print('5) Dataset input')
 
-    # Run all
+    # Run harvesting, gridding, indexing, post processing
     if CHOSEN_OPTION == '1':
         for dataset in DATASET_NAMES:
             run_harvester([dataset], configs, OUTPUT_DIR)
         run_cycle_gridding(OUTPUT_DIR)
         if run_indexing(OUTPUT_DIR, REPROCESS):
-            run_txt_gen_and_post()
+            run_post_processing()
 
-    # Run harvesters
+    # Run all harvesters
     elif CHOSEN_OPTION == '2':
         for dataset in DATASET_NAMES:
             run_harvester([dataset], configs, OUTPUT_DIR)
 
-    # Run cycling
+    # Run specific harvester
     elif CHOSEN_OPTION == '3':
-        run_cycle_gridding(OUTPUT_DIR)
-
-    elif CHOSEN_OPTION == '4':
-        if run_indexing(OUTPUT_DIR, REPROCESS):
-            run_plot_generation(OUTPUT_DIR)
-            # run_txt_gen_and_post(OUTPUT_DIR)
-
-    # Select dataset and pipeline step(s)
-    elif CHOSEN_OPTION == '5':
         ds_dict = dict(enumerate(DATASET_NAMES, start=1))
         while True:
             print('\nAvailable datasets:\n')
@@ -306,32 +294,31 @@ if __name__ == '__main__':
                 break
 
         CHOSEN_DS = ds_dict[int(ds_index)]
-        print(f'\nUsing {CHOSEN_DS} dataset')
+        print(f'\nHarvesting {CHOSEN_DS} dataset')
 
-        STEPS = ['harvest']
-        steps_dict = dict(enumerate(STEPS, start=1))
+        run_harvester([CHOSEN_DS], configs, OUTPUT_DIR)
 
-        while True:
-            print('\nAvailable steps:\n')
-            for i, step in steps_dict.items():
-                print(f'{i}) {step}')
-            steps_index = input('\nEnter pipeline step(s) number: ')
+    # Run gridding
+    elif CHOSEN_OPTION == '4':
+        run_cycle_gridding(OUTPUT_DIR)
 
-            if not steps_index.isdigit() or int(steps_index) not in range(1, len(STEPS)+1):
-                print(
-                    f'Invalid step(s), "{steps_index}", please enter a valid selection')
-            else:
-                break
+    # Run indexing (and post processing)
+    elif CHOSEN_OPTION == '5':
+        if run_indexing(OUTPUT_DIR, REPROCESS):
+            run_post_processing(OUTPUT_DIR)
 
-        wanted_steps = steps_dict[int(steps_index)]
-
-        if 'harvest' in wanted_steps:
-            run_harvester([CHOSEN_DS], configs, OUTPUT_DIR)
+    # Run post processing
     elif CHOSEN_OPTION == '6':
-        run_plot_generation(OUTPUT_DIR)
+        run_post_processing(OUTPUT_DIR)
+
+    # Post txt file to website ftp
     elif CHOSEN_OPTION == '7':
-        # run_plot_generation(OUTPUT_DIR)
-        # run_txt_gen_and_post(OUTPUT_DIR)
-        pass
+        confirm = input(
+            '\nPlease confirm posting indicators to ftp (y to confirm): ')
+
+        if confirm.lower != 'y':
+            print('Not posting to ftp.')
+        else:
+            post_to_ftp(OUTPUT_DIR)
 
     print_statuses()
