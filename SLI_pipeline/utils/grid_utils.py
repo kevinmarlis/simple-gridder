@@ -7,29 +7,25 @@ def find_mappings_from_source_to_target(source_grid, target_grid,
                                         source_grid_min_L, source_grid_max_L,
                                         neighbours=100,
                                         less_output=True):
-
     """
     find_mappings_from_source_to_target comes from Ian Fenty's ecco_cloud_utils
     code as part of ECCO-ACCESS
-    
+
     Params:
         source grid, target_grid: area or grid defintion objects from pyresample
         target_grid_radius: a vector indicating the radius of each target grid cell (m)
         source_grid_min_l, source_grid_max_L: min and max distances between adjacent source grid cells (m)
         neighbours: Specifies number of neighbours to look for when getting the neighbour info of a cell using pyresample.
                     Default is 100 to limit memory usage. Value given must be a whole number greater than 0
-    
+
     Returns:
 
     """
-
     # # of element of the source and target grids
     len_source_grid = source_grid.size
     len_target_grid = target_grid.size
-
     # the maximum radius of the target grid
     max_target_grid_radius = np.nanmax(target_grid_radius)
-
     # the maximum number of neighbors to consider when doing the bin averaging
     # assuming that we have the largets target grid radius and the smallest
     # source grid length. (upper bound)
@@ -37,7 +33,6 @@ def find_mappings_from_source_to_target(source_grid, target_grid,
     # the ceiling is used to ensure the result is a whole number > 0
     neighbours_upper_bound = np.ceil(
         (max_target_grid_radius*2/source_grid_min_L)**2)
-
     # compare provided and upper_bound value for neighbours.
     # limit neighbours to the upper_bound if the supplied neighbours value is larger
     # since you dont need more neighbours than exists within a cell.

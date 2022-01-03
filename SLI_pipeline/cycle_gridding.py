@@ -9,10 +9,10 @@ import numpy as np
 import pyresample as pr
 import xarray as xr
 from netCDF4 import default_fillvals  # pylint: disable=no-name-in-module
-from pyresample.kd_tree import resample_gauss
+from pyresample.kd_tree import resample_gauss, get_neighbour_info
 from pyresample.utils import check_and_wrap
 
-from utils import file_utils, solr_utils
+from utils import file_utils, solr_utils, grid_utils
 
 logs_path = 'SLI_pipeline/logs/'
 logging.config.fileConfig(f'{logs_path}/log.ini',
@@ -127,6 +127,56 @@ def merge_granules(cycle_granules):
     return cycle_ds
 
 
+def gauss_grid(ssha_nn_obj, global_obj, params):
+
+    tmp_ssha_lons, tmp_ssha_lats = check_and_wrap(ssha_nn_obj['lon'].ravel(),
+                                                  ssha_nn_obj['lat'].ravel())
+
+    ssha_grid = pr.geometry.SwathDefinition(
+        lons=tmp_ssha_lons, lats=tmp_ssha_lats)
+
+    new_vals = resample_gauss(ssha_grid, ssha_nn_obj['ssha'],
+                              global_obj['swath'],
+                              radius_of_influence=params['roi'],
+                              sigmas=params['sigma'],
+                              fill_value=np.NaN, neighbours=params['neighbours'])
+
+    new_vals_2d = np.zeros_like(global_obj['ds'].area.values) * np.nan
+    for i, val in enumerate(new_vals):
+        new_vals_2d.ravel()[global_obj['wet'][i]] = val
+    return new_vals_2d
+
+
+def get_data_points(ssha_nn_obj, global_obj):
+    print('\tDetermining number of points...')
+
+    global_area_vals = global_obj['ds'].area.values
+
+    temp_pattern_lons, temp_pattern_lats = check_and_wrap(ssha_nn_obj['lon'],
+                                                          ssha_nn_obj['lat'])
+
+    cycle_swath_def = pr.geometry.SwathDefinition(lons=temp_pattern_lons,
+                                                  lats=temp_pattern_lats)
+    global_grid_radius = np.sqrt(global_area_vals.ravel())/2*np.sqrt(2)
+
+    global_grid_radius_wet = global_grid_radius.ravel()[global_obj['wet']]
+
+    source_indices_within_target_radius_i, \
+        num_source_indices_within_target_radius_i,\
+        nearest_source_index_to_target_index_i = \
+        grid_utils.find_mappings_from_source_to_target(cycle_swath_def,
+                                                       global_obj['swath'],
+                                                       global_grid_radius_wet,
+                                                       3e3,
+                                                       6e5,
+                                                       neighbours=500)
+
+    pts_2d = np.zeros_like(global_area_vals) * np.nan
+    for i, val in enumerate(num_source_indices_within_target_radius_i):
+        pts_2d.ravel()[global_obj['wet'][i]] = val
+    return pts_2d
+
+
 def gridding(cycle_ds, date, sources):
 
     ref_files_path = Path().resolve() / 'SLI_pipeline' / 'ref_files'
@@ -147,6 +197,12 @@ def gridding(cycle_ds, date, sources):
     global_swath_def = pr.geometry.SwathDefinition(lons=target_lons_wet,
                                                    lats=target_lats_wet)
 
+    global_obj = {
+        'swath': global_swath_def,
+        'ds': global_ds,
+        'wet': wet_ins
+    }
+
     # Define the 'swath' as the lats/lon pairs of the model grid
     ssha_lon = cycle_ds.longitude.values.ravel()
     ssha_lat = cycle_ds.latitude.values.ravel()
@@ -156,27 +212,25 @@ def gridding(cycle_ds, date, sources):
     ssha_lon_nn = ssha_lon[~np.isnan(ssha)]
     ssha_nn = ssha[~np.isnan(ssha)]
 
+    ssha_nn_obj = {
+        'lat': ssha_lat_nn,
+        'lon': ssha_lon_nn,
+        'ssha': ssha_nn
+    }
+
+    params = {
+        'roi': 6e5,  # 6e5
+        'sigma': 1e5,
+        'neighbours': 500  # 500 for production, 10 for development
+    }
+
     if np.sum(~np.isnan(ssha_nn)) > 0:
-        tmp_ssha_lons, tmp_ssha_lats = check_and_wrap(ssha_lon_nn.ravel(),
-                                                      ssha_lat_nn.ravel())
+        new_vals = gauss_grid(ssha_nn_obj, global_obj, params)
 
-        ssha_grid = pr.geometry.SwathDefinition(
-            lons=tmp_ssha_lons, lats=tmp_ssha_lats)
+        grid_points = get_data_points(ssha_nn_obj, global_obj)
 
-        roi = 6e5  # 6e5
-        sigma = 1e5
-        neighbours = 500  # 500 for production, 10 for development
-
-        new_vals = resample_gauss(ssha_grid, ssha_nn,
-                                  global_swath_def,
-                                  radius_of_influence=roi,
-                                  sigmas=sigma,
-                                  fill_value=np.NaN, neighbours=neighbours)
-
-        new_vals_2d = np.zeros_like(global_ds.area.values) * np.nan
-        for i, val in enumerate(new_vals):
-            new_vals_2d.ravel()[wet_ins[i]] = val
-        new_vals = new_vals_2d
+    else:
+        raise ValueError('No ssha values.')
 
     gridded_da = xr.DataArray(new_vals, dims=['latitude', 'longitude'],
                               coords={'longitude': global_lon,
@@ -186,6 +240,13 @@ def gridding(cycle_ds, date, sources):
 
     gridded_da.name = 'SSHA'
     gridded_ds = gridded_da.to_dataset()
+
+    pts_da = xr.DataArray(grid_points, dims=['latitude', 'longitude'],
+                          coords={'longitude': global_lon,
+                                  'latitude': global_lat})
+    pts_da = pts_da.assign_coords(coords={'time': date})
+
+    gridded_ds['points'] = pts_da
 
     gridded_ds['mask'] = (['latitude', 'longitude'], np.where(
         global_ds['maskC'].isel(Z=0) == True, 1, 0))
@@ -204,7 +265,8 @@ def gridding(cycle_ds, date, sources):
     gridded_ds['longitude'].attrs = cycle_ds['longitude'].attrs
 
     gridded_ds.attrs['gridding_method'] = \
-        f'Gridded using pyresample resample_gauss with roi={roi}, neighbours={neighbours}'
+        f'Gridded using pyresample resample_gauss with roi={params["roi"]}, \
+            neighbours={params["neighbours"]}'
 
     gridded_ds.attrs['source'] = 'Combination of ' + \
         ', '.join(sources) + ' along track instruments'
@@ -344,7 +406,7 @@ def cycle_gridding(output_dir):
         fq = ['type_s:gridded_cycle', f'date_dt:"{solr_date}"']
         r = solr_utils.solr_query(fq)
         if r:
-            item['id'] == r[0]['id']
+            item['id'] = r[0]['id']
 
         resp = solr_utils.solr_update([item], True)
         if resp.status_code == 200:
