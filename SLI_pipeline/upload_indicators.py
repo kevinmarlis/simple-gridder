@@ -1,19 +1,17 @@
 import logging
 import logging.config
-import os
 
 import yaml
 from paramiko import SSHClient
 from scp import SCPClient
 
-logs_path = 'SLI_pipeline/logs/'
-logging.config.fileConfig(f'{logs_path}/log.ini',
+logging.config.fileConfig(f'logs/log.ini',
                           disable_existing_loggers=False)
 log = logging.getLogger(__name__)
 
 
 def main(output_dir):
-    with open(f'{os.getcwd()}/SLI_pipeline/configs/login.yaml', "r") as stream:
+    with open(f'SLI_pipeline/configs/login.yaml', "r") as stream:
         config = yaml.load(stream, yaml.Loader)
 
     data_path = output_dir / f'indicator/indicator_data.txt'

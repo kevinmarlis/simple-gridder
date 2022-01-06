@@ -1,9 +1,6 @@
-import os
 import requests
-from datetime import datetime
 
-SOLR_HOST = 'http://localhost:8983/solr/'
-SOLR_COLLECTION = 'sli_dev'
+from conf.global_settings import SOLR_COLLECTION, SOLR_HOST
 
 
 def solr_query(fq, sort=''):

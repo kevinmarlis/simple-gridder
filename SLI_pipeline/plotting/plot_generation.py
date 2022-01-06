@@ -7,8 +7,7 @@ import xarray as xr
 from matplotlib import pyplot as plt
 from utils import solr_utils
 
-logs_path = 'SLI_pipeline/logs/'
-logging.config.fileConfig(f'{logs_path}/log.ini',
+logging.config.fileConfig(f'logs/log.ini',
                           disable_existing_loggers=False)
 log = logging.getLogger(__name__)
 
@@ -31,9 +30,10 @@ def generate_plots(output_dir, ind_path):
     else:
         slice_start = None
 
+    output_path = output_dir / 'indicator/plots'
+    output_path.mkdir(parents=True, exist_ok=True)
+
     for var in vars:
-        output_path = output_dir / 'indicator/plots'
-        output_path.mkdir(parents=True, exist_ok=True)
 
         if 'pdo' in var:
             var_ds = ds[var].sel(time=slice(pdo_start_time, end_time))
@@ -85,7 +85,3 @@ def main(output_dir):
     ind_path = output_dir / 'indicator/indicators.nc'
 
     generate_plots(output_dir, ind_path)
-
-
-if __name__ == '__main__':
-    main(Path('/Users/marlis/Developer/SLI/sealevel_output'))

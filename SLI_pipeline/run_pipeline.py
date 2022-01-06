@@ -5,14 +5,13 @@ import logging
 import logging.config
 from argparse import ArgumentParser
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 
 import requests
 import yaml
 from webdav3.client import Client
 from matplotlib import pyplot as plt
-import h5py
+import numexpr
 
 from harvester import harvester
 from indicators import indicators
@@ -22,25 +21,20 @@ import upload_indicators
 
 from plotting import plot_generation
 from utils import solr_utils
+from conf.global_settings import OUTPUT_DIR
 
-RUN_TIME = datetime.now()
-
-
-logs_path = Path('SLI_pipeline/logs/')
+logs_path = Path(f'logs/')
 logs_path.mkdir(parents=True, exist_ok=True)
 
 logging.config.fileConfig(f'{logs_path}/log.ini',
                           disable_existing_loggers=False)
 log = logging.getLogger(__name__)
-logging.getLogger("requests").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("webdav3").setLevel(logging.WARNING)
-logging.getLogger("matplotlib").setLevel(logging.WARNING)
-logging.getLogger("h5py").setLevel(logging.WARNING)
 
-# Hardcoded output directory path for pipeline files
-OUTPUT_DIR = Path('/Users/marlis/Developer/SLI/sealevel_output/')
-OUTPUT_DIR = Path('/Users/marlis/Developer/SLI/dev_output/')
+# Set package logging level to WARNING
+logs = ['requets', 'urllib3', 'webdav3',
+        'matplotlib', 'numexpr', 'pyresample']
+for l in logs:
+    logging.getLogger(l).setLevel(logging.WARNING)
 
 if not Path.is_dir(OUTPUT_DIR):
     print('Missing output directory. Please fill in. Exiting.')
@@ -250,7 +244,7 @@ if __name__ == '__main__':
 
     # --------------------- Run pipeline ---------------------
 
-    config_path = Path(f'SLI_pipeline/configs/datasets.yaml')
+    config_path = Path(f'SLI_pipeline/conf/datasets.yaml')
     with open(config_path, "r") as stream:
         config = yaml.load(stream, yaml.Loader)
     configs = {c['ds_name']: c for c in config}
@@ -258,11 +252,6 @@ if __name__ == '__main__':
     DATASET_NAMES = list(configs.keys())
 
     CHOSEN_OPTION = show_menu() if args.options_menu and not REPROCESS else '1'
-    # print('1) Run pipeline on all')
-    # print('2) Harvest all datasets')
-    # print('3) Grid all datasets')
-    # print('4) Calculate index values')
-    # print('5) Dataset input')
 
     # Run harvesting, gridding, indexing, post processing
     if CHOSEN_OPTION == '1':
