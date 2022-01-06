@@ -1,21 +1,25 @@
-from collections import defaultdict
-from datetime import datetime
 import logging
 import logging.config
+import time
+import warnings
+from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
-import h5py  # need to import for xarray to open hdf5 properly
 import numpy as np
-import pyresample as pr
 import xarray as xr
 from netCDF4 import default_fillvals  # pylint: disable=no-name-in-module
-from pyresample.kd_tree import resample_gauss, get_neighbour_info
-from pyresample.utils import check_and_wrap
 
-from utils import file_utils, solr_utils, grid_utils
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore', UserWarning)
+    import pyresample as pr
+    from pyresample.kd_tree import resample_gauss
+    from pyresample.utils import check_and_wrap
 
-logs_path = 'SLI_pipeline/logs/'
-logging.config.fileConfig(f'{logs_path}/log.ini',
+from utils import file_utils, grid_utils, solr_utils
+
+
+logging.config.fileConfig(f'logs/log.ini',
                           disable_existing_loggers=False)
 log = logging.getLogger(__name__)
 
@@ -134,17 +138,21 @@ def gauss_grid(ssha_nn_obj, global_obj, params):
 
     ssha_grid = pr.geometry.SwathDefinition(
         lons=tmp_ssha_lons, lats=tmp_ssha_lats)
-
-    new_vals = resample_gauss(ssha_grid, ssha_nn_obj['ssha'],
-                              global_obj['swath'],
-                              radius_of_influence=params['roi'],
-                              sigmas=params['sigma'],
-                              fill_value=np.NaN, neighbours=params['neighbours'])
+    new_vals, _, counts = resample_gauss(ssha_grid, ssha_nn_obj['ssha'],
+                                         global_obj['swath'],
+                                         radius_of_influence=params['roi'],
+                                         sigmas=params['sigma'],
+                                         fill_value=np.NaN, neighbours=params['neighbours'],
+                                         nprocs=4, with_uncert=True)
 
     new_vals_2d = np.zeros_like(global_obj['ds'].area.values) * np.nan
     for i, val in enumerate(new_vals):
         new_vals_2d.ravel()[global_obj['wet'][i]] = val
-    return new_vals_2d
+
+    counts_2d = np.zeros_like(global_obj['ds'].area.values) * np.nan
+    for i, val in enumerate(counts):
+        counts_2d.ravel()[global_obj['wet'][i]] = val
+    return new_vals_2d, counts_2d
 
 
 def get_data_points(ssha_nn_obj, global_obj):
@@ -168,8 +176,8 @@ def get_data_points(ssha_nn_obj, global_obj):
                                                        global_obj['swath'],
                                                        global_grid_radius_wet,
                                                        3e3,
-                                                       6e5,
-                                                       neighbours=500)
+                                                       1e5,
+                                                       neighbours=600)
 
     pts_2d = np.zeros_like(global_area_vals) * np.nan
     for i, val in enumerate(num_source_indices_within_target_radius_i):
@@ -179,7 +187,7 @@ def get_data_points(ssha_nn_obj, global_obj):
 
 def gridding(cycle_ds, date, sources):
 
-    ref_files_path = Path().resolve() / 'SLI_pipeline' / 'ref_files'
+    ref_files_path = Path(f'ref_files/')
 
     # Prepare global map
     global_path = ref_files_path / 'GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'
@@ -222,31 +230,43 @@ def gridding(cycle_ds, date, sources):
         'roi': 6e5,  # 6e5
         'sigma': 1e5,
         'neighbours': 500  # 500 for production, 10 for development
+        # 1e5 roi, 1e5 sigma, 1000ish neighbours
     }
 
     if np.sum(~np.isnan(ssha_nn)) > 0:
-        new_vals = gauss_grid(ssha_nn_obj, global_obj, params)
-
-        grid_points = get_data_points(ssha_nn_obj, global_obj)
+        start = time.time()
+        new_vals, counts = gauss_grid(ssha_nn_obj, global_obj, params)
+        end = time.time()
+        print(end - start)
+        # grid_points = get_data_points(ssha_nn_obj, global_obj)
 
     else:
         raise ValueError('No ssha values.')
+
+    time_seconds = date.astype('datetime64[s]').astype('int')
 
     gridded_da = xr.DataArray(new_vals, dims=['latitude', 'longitude'],
                               coords={'longitude': global_lon,
                                       'latitude': global_lat})
 
-    gridded_da = gridded_da.assign_coords(coords={'time': date})
+    gridded_da = gridded_da.assign_coords(coords={'time': time_seconds})
 
     gridded_da.name = 'SSHA'
     gridded_ds = gridded_da.to_dataset()
 
-    pts_da = xr.DataArray(grid_points, dims=['latitude', 'longitude'],
-                          coords={'longitude': global_lon,
-                                  'latitude': global_lat})
-    pts_da = pts_da.assign_coords(coords={'time': date})
+    # pts_da = xr.DataArray(grid_points, dims=['latitude', 'longitude'],
+    #                       coords={'longitude': global_lon,
+    #                               'latitude': global_lat})
+    # pts_da = pts_da.assign_coords(coords={'time': time_seconds})
 
-    gridded_ds['points'] = pts_da
+    # gridded_ds['points'] = pts_da
+
+    counts_da = xr.DataArray(counts, dims=['latitude', 'longitude'],
+                             coords={'longitude': global_lon,
+                                     'latitude': global_lat})
+    counts_da = counts_da.assign_coords(coords={'time': time_seconds})
+
+    gridded_ds['counts'] = counts_da
 
     gridded_ds['mask'] = (['latitude', 'longitude'], np.where(
         global_ds['maskC'].isel(Z=0) == True, 1, 0))
@@ -261,8 +281,23 @@ def gridding(cycle_ds, date, sources):
         gridded_ds['SSHA'].values)
     gridded_ds['SSHA'].attrs['summary'] = 'Data gridded to 0.5 degree lat lon grid'
 
+    gridded_ds['counts'].attrs = {
+        'valid_min': np.nanmin(counts_da.values),
+        'valid_max': np.nanmax(counts_da.values),
+        'long_name': 'number of data values used in weighting each element in SSHA',
+        'source': 'Returned from pyresample resample_gauss function.'
+    }
+
     gridded_ds['latitude'].attrs = cycle_ds['latitude'].attrs
     gridded_ds['longitude'].attrs = cycle_ds['longitude'].attrs
+
+    gridded_ds['time'].attrs = {
+        'long_name': 'time',
+        'standard_name': 'time',
+        'units': 'seconds since 1970-01-01',
+        'calendar': 'proleptic_gregorian',
+        'comment': 'seconds since 1970-01-01 00:00:00'
+    }
 
     gridded_ds.attrs['gridding_method'] = \
         f'Gridded using pyresample resample_gauss with roi={params["roi"]}, \
@@ -340,7 +375,6 @@ def run_status():
 
 def cycle_gridding(output_dir):
     ALL_DATES = np.arange('1992-10-05', 'now', 7, dtype='datetime64[D]')
-    output_dir = Path('/Users/marlis/Developer/SLI/dev_output')
     date_regex = '%Y-%m-%dT%H:%M:%S'
 
     # The main loop
