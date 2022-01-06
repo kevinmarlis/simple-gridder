@@ -11,10 +11,10 @@ from xml.etree.ElementTree import fromstring
 import requests
 import yaml
 from webdav3.client import Client
+
 from utils import file_utils, solr_utils
 
-logs_path = 'SLI_pipeline/logs/'
-logging.config.fileConfig(f'{logs_path}/log.ini',
+logging.config.fileConfig(f'logs/log.ini',
                           disable_existing_loggers=False)
 log = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ def podaac_drive_harvester(config, docs, target_dir):
 
     entries_for_solr = []
 
-    with open(Path(f'{Path(__file__).resolve().parent}/configs/login.yaml'), "r") as stream:
+    with open(Path(f'SLI_pipeline/conf/login.yaml'), "r") as stream:
         earthdata_login = yaml.load(stream, yaml.Loader)
 
     webdav_options = {
@@ -301,7 +301,7 @@ def podaac_drive_harvester(config, docs, target_dir):
                     if not local_fp.exists() or mod_time_str > datetime.fromtimestamp(local_fp.stat().st_mtime).strftime(date_regex):
                         print(f' - Downloading {filename} to {local_fp}')
 
-                        client.download_sync(remote_path=f_path,
+                        client.download_file(remote_path=f_path,
                                              local_path=local_fp)
                     else:
                         print(
