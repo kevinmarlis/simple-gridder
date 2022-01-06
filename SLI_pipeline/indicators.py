@@ -8,20 +8,19 @@ from pathlib import Path
 from shutil import copyfile
 
 import numpy as np
-import pyresample as pr
 import xarray as xr
 from netCDF4 import default_fillvals
-from pyresample.utils import check_and_wrap
+
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore', UserWarning)
+    import pyresample as pr
+    from pyresample.utils import check_and_wrap
 
 from utils import file_utils, solr_utils
 
-
-logs_path = 'SLI_pipeline/logs/'
-logging.config.fileConfig(f'{logs_path}/log.ini',
+logging.config.fileConfig(f'logs/log.ini',
                           disable_existing_loggers=False)
 log = logging.getLogger(__name__)
-
-warnings.filterwarnings("ignore")
 
 
 def calc_linear_trend(ref_dir, cycle_ds):
@@ -131,16 +130,6 @@ def calc_climate_index(agg_ds, pattern, pattern_ds, ann_cyc_in_pattern):
     return LS_result, center_time, ssha_anom
 
 
-# one of the ways of doing the LS fit is with the scipy.optimize leastsq
-# requires defining a function with the following syntax
-def func1(params, x, y):
-    m, b = params[1], params[0]
-    # the expression connecting y and the parameters is arbitrary
-    # but here we just do the old standby
-    residual = y - (m*x + b)
-    return residual
-
-
 def save_files(date, output_dir, indicator_ds, globals_ds, pattern_and_anom_das):
     ds_and_paths = []
 
@@ -191,7 +180,7 @@ def save_files(date, output_dir, indicator_ds, globals_ds, pattern_and_anom_das)
     return
 
 
-def concat_files(indicator_dir, type, pattern):
+def concat_files(indicator_dir, type, pattern=''):
     # Glob DAILY indicators
     daily_path = indicator_dir / f'DAILY/cycle_{type}s' / pattern
     daily_files = [x for x in daily_path.glob('*.nc') if x.is_file()]
@@ -233,11 +222,19 @@ def indicators(output_path, reprocess):
         indicator_metadata = indicator_query[0]
         modified_time = indicator_metadata['modified_time_dt']
 
+        backup_dir = Path(f'{output_path}/indicator/backups')
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
         # Copy old indicator file as backup
         try:
+            print('Making backup of existing indicator file.\n')
             indicator_path = indicator_metadata['indicator_filepath_s']
-            backup_path = f'{indicator_path.split(".")[0]}_backup.nc'
+            old_time = str(indicator_metadata['modified_time_dt'])
+            old_time = old_time.replace(':', '').replace('Z', '')
+
+            backup_path = f'{backup_dir}/indicator_{old_time}.nc'
             copyfile(indicator_path, backup_path)
+
         except Exception as e:
             log.exception(f'Error creating indicator backup: {e}')
 
@@ -269,7 +266,7 @@ def indicators(output_path, reprocess):
     ann_cyc_in_pattern = dict()
     pattern_area_defs = dict()
 
-    ref_dir = Path().resolve() / 'SLI_pipeline/ref_files'
+    ref_dir = Path(f'ref_files/')
 
     # Global grid
     ecco_fname = 'GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'
@@ -427,7 +424,7 @@ def indicators(output_path, reprocess):
         indicator_dir = output_path / 'indicator'
 
         # open_mfdataset is too slow so we glob instead
-        indicators = concat_files(indicator_dir, 'indicator', '')
+        indicators = concat_files(indicator_dir, 'indicator')
         print(' - Saving indicator file\n')
         indicators.to_netcdf(indicator_dir / 'indicators.nc')
 
@@ -439,7 +436,7 @@ def indicators(output_path, reprocess):
 
             pattern_anoms = None
 
-        globals_ds = concat_files(indicator_dir, 'global', '')
+        globals_ds = concat_files(indicator_dir, 'global')
         print(' - Saving global file\n')
         globals_ds.to_netcdf(indicator_dir / 'globals.nc')
 
