@@ -23,6 +23,12 @@ logging.config.fileConfig(f'logs/log.ini',
 log = logging.getLogger(__name__)
 
 
+def validate_counts(ds):
+    counts = ds['counts'].vals
+
+    return True
+
+
 def calc_linear_trend(ref_dir, cycle_ds):
     trend_ds = xr.open_dataset(
         ref_dir / 'BH_offset_and_trend_v0_new_grid.nc')
@@ -315,6 +321,7 @@ def indicators(output_path, reprocess):
     # ==============================================
 
     for cycle in updated_cycles:
+
         try:
             # Setup output directories
             output_dir = output_path / 'indicator' / 'daily'
@@ -322,6 +329,9 @@ def indicators(output_path, reprocess):
 
             cycle_ds = xr.open_dataset(cycle['filepath_s'])
             cycle_ds.close()
+
+            if not validate_counts(cycle):
+                continue
 
             date = cycle['date_dt'][:10]
 

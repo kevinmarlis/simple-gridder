@@ -223,6 +223,7 @@ def post_to_ftp(OUTPUT_DIR):
         upload_indicators.main(OUTPUT_DIR)
         log.info('Index txt file upload complete.')
     except Exception as e:
+        print(e)
         log.error(f'Index txt file upload failed: {e}')
 
 
@@ -305,7 +306,7 @@ if __name__ == '__main__':
         confirm = input(
             '\nPlease confirm posting indicators to ftp (y to confirm): ')
 
-        if confirm.lower != 'y':
+        if confirm != 'y':
             print('Not posting to ftp.')
         else:
             post_to_ftp(OUTPUT_DIR)

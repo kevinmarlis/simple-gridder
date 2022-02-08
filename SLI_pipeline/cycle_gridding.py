@@ -155,36 +155,6 @@ def gauss_grid(ssha_nn_obj, global_obj, params):
     return new_vals_2d, counts_2d
 
 
-def get_data_points(ssha_nn_obj, global_obj):
-    print('\tDetermining number of points...')
-
-    global_area_vals = global_obj['ds'].area.values
-
-    temp_pattern_lons, temp_pattern_lats = check_and_wrap(ssha_nn_obj['lon'],
-                                                          ssha_nn_obj['lat'])
-
-    cycle_swath_def = pr.geometry.SwathDefinition(lons=temp_pattern_lons,
-                                                  lats=temp_pattern_lats)
-    global_grid_radius = np.sqrt(global_area_vals.ravel())/2*np.sqrt(2)
-
-    global_grid_radius_wet = global_grid_radius.ravel()[global_obj['wet']]
-
-    source_indices_within_target_radius_i, \
-        num_source_indices_within_target_radius_i,\
-        nearest_source_index_to_target_index_i = \
-        grid_utils.find_mappings_from_source_to_target(cycle_swath_def,
-                                                       global_obj['swath'],
-                                                       global_grid_radius_wet,
-                                                       3e3,
-                                                       1e5,
-                                                       neighbours=600)
-
-    pts_2d = np.zeros_like(global_area_vals) * np.nan
-    for i, val in enumerate(num_source_indices_within_target_radius_i):
-        pts_2d.ravel()[global_obj['wet'][i]] = val
-    return pts_2d
-
-
 def gridding(cycle_ds, date, sources):
 
     ref_files_path = Path(f'ref_files/')
@@ -230,16 +200,10 @@ def gridding(cycle_ds, date, sources):
         'roi': 6e5,  # 6e5
         'sigma': 1e5,
         'neighbours': 500  # 500 for production, 10 for development
-        # 1e5 roi, 1e5 sigma, 1000ish neighbours
     }
 
     if np.sum(~np.isnan(ssha_nn)) > 0:
-        start = time.time()
         new_vals, counts = gauss_grid(ssha_nn_obj, global_obj, params)
-        end = time.time()
-        print(end - start)
-        # grid_points = get_data_points(ssha_nn_obj, global_obj)
-
     else:
         raise ValueError('No ssha values.')
 
@@ -253,13 +217,6 @@ def gridding(cycle_ds, date, sources):
 
     gridded_da.name = 'SSHA'
     gridded_ds = gridded_da.to_dataset()
-
-    # pts_da = xr.DataArray(grid_points, dims=['latitude', 'longitude'],
-    #                       coords={'longitude': global_lon,
-    #                               'latitude': global_lat})
-    # pts_da = pts_da.assign_coords(coords={'time': time_seconds})
-
-    # gridded_ds['points'] = pts_da
 
     counts_da = xr.DataArray(counts, dims=['latitude', 'longitude'],
                              coords={'longitude': global_lon,

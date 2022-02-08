@@ -14,8 +14,7 @@ from webdav3.client import Client
 
 from utils import file_utils, solr_utils
 
-logging.config.fileConfig(f'logs/log.ini',
-                          disable_existing_loggers=False)
+logging.config.fileConfig(f'logs/log.ini', disable_existing_loggers=False)
 log = logging.getLogger(__name__)
 
 
