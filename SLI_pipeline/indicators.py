@@ -251,9 +251,9 @@ def indicators(output_path, reprocess):
     updated_cycles = solr_utils.solr_query(fq, sort='start_date_dt asc')
 
     # ONLY PROCEED IF THERE ARE CYCLES NEEDING CALCULATING
-    # if not updated_cycles:
-    #     print('No regridded cycles modified since last index calculation.')
-    #     return False
+    if not updated_cycles:
+        print('No regridded cycles modified since last index calculation.')
+        return False
 
     time_format = "%Y-%m-%dT%H:%M:%S"
 
