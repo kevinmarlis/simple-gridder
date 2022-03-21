@@ -33,8 +33,8 @@ for l in logs:
     logging.getLogger(l).setLevel(logging.WARNING)
 
 if not Path.is_dir(OUTPUT_DIR):
-    print('Missing output directory. Please fill in. Exiting.')
-    log.fatal('Missing output directory. Please fill in. Exiting.')
+    print('Output directory does not exist. Exiting.')
+    log.fatal('Output directory does not exist. Exiting.')
     exit()
 print(f'\nUsing output directory: {OUTPUT_DIR}')
 

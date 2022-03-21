@@ -8,4 +8,3 @@ SOLR_HOST = 'http://localhost:8983/solr/'
 SOLR_COLLECTION = 'sli_dev'
 
 os.chdir(ROOT_DIR)
-print(os.getcwd())
