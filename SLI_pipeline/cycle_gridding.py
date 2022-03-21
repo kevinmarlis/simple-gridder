@@ -157,10 +157,10 @@ def gauss_grid(ssha_nn_obj, global_obj, params):
 
 def gridding(cycle_ds, date, sources):
 
-    ref_files_path = Path(f'ref_files/')
+    ref_path = Path().resolve().parent / 'ref_files'
 
     # Prepare global map
-    global_path = ref_files_path / 'GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'
+    global_path = ref_path / 'GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'
     global_ds = xr.open_dataset(global_path)
 
     wet_ins = np.where(global_ds.maskC.isel(Z=0).values.ravel() > 0)[0]

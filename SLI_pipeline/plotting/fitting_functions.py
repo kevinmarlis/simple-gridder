@@ -4,7 +4,7 @@ import xarray as xr
 import cartopy.crs as ccrs
 import cartopy as cart
 
-ref_path = '/Users/marlis/Developer/SLI/Sea-Level-Indicators/SLI_pipeline/ref_files'
+ref_path = '/Users/marlis/Developer/SLI/Sea-Level-Indicators/ref_files'
 ben_files = [f for f in os.listdir(ref_path) if 'pattern_and_index' in f]
 
 for f in ben_files:

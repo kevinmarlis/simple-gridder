@@ -251,9 +251,9 @@ def indicators(output_path, reprocess):
     updated_cycles = solr_utils.solr_query(fq, sort='start_date_dt asc')
 
     # ONLY PROCEED IF THERE ARE CYCLES NEEDING CALCULATING
-    if not updated_cycles:
-        print('No regridded cycles modified since last index calculation.')
-        return False
+    # if not updated_cycles:
+    #     print('No regridded cycles modified since last index calculation.')
+    #     return False
 
     time_format = "%Y-%m-%dT%H:%M:%S"
 
@@ -272,7 +272,7 @@ def indicators(output_path, reprocess):
     ann_cyc_in_pattern = dict()
     pattern_area_defs = dict()
 
-    ref_dir = Path(f'ref_files/')
+    ref_dir = Path().resolve().parent / 'ref_files'
 
     # Global grid
     ecco_fname = 'GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'

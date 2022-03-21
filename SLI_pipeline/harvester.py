@@ -211,7 +211,7 @@ def podaac_drive_harvester(config, docs, target_dir):
 
     entries_for_solr = []
 
-    with open(Path(f'SLI_pipeline/conf/login.yaml'), "r") as stream:
+    with open(Path(f'conf/login.yaml'), "r") as stream:
         earthdata_login = yaml.load(stream, yaml.Loader)
 
     webdav_options = {

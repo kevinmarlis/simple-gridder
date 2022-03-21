@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 
 def main(output_dir):
-    with open(f'SLI_pipeline/conf/login.yaml', "r") as stream:
+    with open(f'conf/login.yaml', "r") as stream:
         config = yaml.load(stream, yaml.Loader)
 
     data_path = output_dir / f'indicator/indicator_data.txt'
