@@ -374,6 +374,9 @@ def harvester(config, output_path):
 
     now_str = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    entries_for_solr = []
+    source = ''
+
     # Actual downloading and generation of granule docs for Solr
     if config['harvester_type'] == 'podaac':
         entries_for_solr, source = podaac_harvester(config, docs, target_dir)

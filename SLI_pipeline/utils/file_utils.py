@@ -1,4 +1,5 @@
 import hashlib
+import re
 
 
 def md5(fname):
@@ -11,3 +12,13 @@ def md5(fname):
         for chunk in iter(lambda: f.read(4096), b""):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
+
+
+def get_date(regex, fname):
+    """
+    Extracts date from file name using regex
+    """
+    ex = re.compile(regex)
+    match = re.search(ex, fname)
+    date = match.group()
+    return date

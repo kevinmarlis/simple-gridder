@@ -23,11 +23,7 @@ from plotting import plot_generation
 from utils import solr_utils
 from conf.global_settings import OUTPUT_DIR
 
-logs_path = Path(f'logs/')
-logs_path.mkdir(parents=True, exist_ok=True)
-
-logging.config.fileConfig(f'{logs_path}/log.ini',
-                          disable_existing_loggers=False)
+logging.config.fileConfig('logs/log.ini', disable_existing_loggers=False)
 log = logging.getLogger(__name__)
 
 # Set package logging level to WARNING
@@ -245,8 +241,7 @@ if __name__ == '__main__':
 
     # --------------------- Run pipeline ---------------------
 
-    config_path = Path(f'SLI_pipeline/conf/datasets.yaml')
-    with open(config_path, "r") as stream:
+    with open(Path(f'conf/datasets.yaml'), "r") as stream:
         config = yaml.load(stream, yaml.Loader)
     configs = {c['ds_name']: c for c in config}
 
