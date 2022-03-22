@@ -297,7 +297,9 @@ def podaac_drive_harvester(config, docs, target_dir):
                     # Only redownloads if local file is out of town - doesn't waste
                     # time/bandwidth to redownload the same file just because there isn't
                     # a Solr entry. Most useful during development.
-                    if not local_fp.exists() or mod_time_str > datetime.fromtimestamp(local_fp.stat().st_mtime).strftime(date_regex):
+                    if not local_fp.exists() or \
+                            mod_time_str > datetime.fromtimestamp(local_fp.stat().st_mtime).strftime(date_regex) or \
+                            not docs[filename]['harvest_success_b']:
                         print(f' - Downloading {filename} to {local_fp}')
 
                         client.download_file(remote_path=f_path,
