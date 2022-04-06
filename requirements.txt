@@ -7,4 +7,4 @@ pyresample=1.22.3
 python=3.7.7
 scipy=1.7.3
 xarray=0.20.1
-yanml=0.2.5
+yaml=0.2.5

@@ -3,13 +3,16 @@ import logging.config
 import os
 import warnings
 from pathlib import Path
+import glob
 
 import numpy as np
 import xarray as xr
 import yaml
 from netCDF4 import default_fillvals
 
+import time
 from utils import get_date
+from datetime import datetime
 
 with warnings.catch_warnings():
     warnings.simplefilter('ignore', UserWarning)
@@ -26,7 +29,7 @@ log = logging.getLogger(__name__)
 with open('conf.yaml', 'r') as f:
     config = yaml.safe_load(f)
 
-ALL_DATES = np.arange('1992-01-01', 'now',
+ALL_DATES = np.arange('2022-01-15', '2022-01-20',
                       config['grid_frequency'], dtype='datetime64[D]')
 
 try:
@@ -47,7 +50,7 @@ except Exception as e:
 
 def s6_preprocessing():
     '''
-    Function that prepares along track data for gridding by subsetting relevant 
+    Function that prepares along track data for gridding by subsetting relevant
     data variables, filtering data through the use of flags or any other constraint,
     and saving processed data in directory.
     '''
@@ -113,7 +116,7 @@ def s6_preprocessing():
 
 def ecco_along_track_preprocessing(cycle_granules):
     '''
-    Function that prepares along track data for gridding by subsetting relevant 
+    Function that prepares along track data for gridding by subsetting relevant
     data variables, filtering data through the use of flags or any other constraint,
     and saving processed data in directory.
 
@@ -137,8 +140,44 @@ def ecco_along_track_preprocessing(cycle_granules):
     return processed_granules
 
 
+def tonga_preprocessing(cycle_granules):
+    processed_granules = []
+
+    for granule in cycle_granules:
+        print(granule)
+        try:
+            ds = xr.open_dataset(granule, group='data')
+            ds = ds.rename_vars(
+                {'ssh': 'SSHA', 'lats': 'latitude', 'lons': 'longitude'})
+            times = ds.time.values
+
+            lons, lats = check_and_wrap(
+                ds.longitude.values.ravel(), ds.latitude.values.ravel())
+            ds = xr.Dataset(
+                data_vars=dict(
+                    SSHA=(['time'], ds.SSHA.values),
+                    latitude=(['time'], lats),
+                    longitude=(['time'], lons),
+                ),
+                coords={'time': times}
+            )
+            ds = ds.where((ds.latitude >= -66) & (ds.latitude <= -40)
+                          & (ds.longitude >= -170) & (ds.longitude <= -130), drop=True)
+            if 'JASON' in granule and '15' in granule:
+                ds = ds.drop_sel(time=[t for t in ds.time.values if t >=
+                                       1168850199.86633 and t <= 1168853150.10115])
+
+        except Exception as e:
+            print(e)
+            log.exception(e)
+
+        processed_granules.append(ds)
+    return processed_granules
+
+
 preprocessers = {"sentinel6": s6_preprocessing,
-                 "ecco": ecco_along_track_preprocessing}
+                 "ecco": ecco_along_track_preprocessing,
+                 "tonga": tonga_preprocessing}
 
 
 def collect_data(start, end):
@@ -148,7 +187,9 @@ def collect_data(start, end):
     '''
     cycle_granules = []
     try:
-        cycle_granules = [f for f in os.listdir(INPUT_DIR) if config['file_format'] in f and
+        all_files = [f for f in glob.glob(
+            f'{INPUT_DIR}/**/*{config["file_format"]}', recursive=True)]
+        cycle_granules = [f for f in all_files if config['file_format'] in f and
                           get_date(DATE_REGEX, f) <= end and get_date(DATE_REGEX, f) >= start]
         cycle_granules.sort()
     except Exception as e:
@@ -191,12 +232,11 @@ def merge_granules(cycle_granules):
             'valid_max': np.nanmax(ds.SSHA.values),
             'comment': 'Sea level determined from satellite altitude - range - all altimetric corrections',
         }
-
         granules.append(ds)
 
     cycle_ds = xr.concat((granules), dim='time') if len(
         granules) > 1 else granules[0]
-    cycle_ds = cycle_ds.sortby('time')
+    # cycle_ds = cycle_ds.sortby('time')
 
     return cycle_ds
 
@@ -208,18 +248,21 @@ def gauss_grid(ssha_nn_obj, global_obj, params):
 
     ssha_grid = pr.geometry.SwathDefinition(
         lons=tmp_ssha_lons, lats=tmp_ssha_lats)
+
+    print('beginning gridding')
     new_vals, _, counts = resample_gauss(ssha_grid, ssha_nn_obj['ssha'],
                                          global_obj['swath'],
                                          radius_of_influence=params['roi'],
                                          sigmas=params['sigma'],
                                          fill_value=np.NaN, neighbours=params['neighbours'],
                                          nprocs=4, with_uncert=True)
+    print('completed gridding')
+    new_vals_2d = np.zeros_like(global_obj['ds'].landseamask.values) * np.nan
 
-    new_vals_2d = np.zeros_like(global_obj['ds'].area.values) * np.nan
     for i, val in enumerate(new_vals):
         new_vals_2d.ravel()[global_obj['wet'][i]] = val
 
-    counts_2d = np.zeros_like(global_obj['ds'].area.values) * np.nan
+    counts_2d = np.zeros_like(global_obj['ds'].landseamask.values) * np.nan
     for i, val in enumerate(counts):
         counts_2d.ravel()[global_obj['wet'][i]] = val
     return new_vals_2d, counts_2d
@@ -227,13 +270,18 @@ def gauss_grid(ssha_nn_obj, global_obj, params):
 
 def gridding(cycle_ds, cycle_center):
     # Prepare global map
-    global_path = 'ref_files/GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'
+    global_path = 'ref_files/GPM_IMERG_LandSeaMask.2.nc4'
     global_ds = xr.open_dataset(global_path)
 
-    wet_ins = np.where(global_ds.maskC.isel(Z=0).values.ravel() > 0)[0]
+    global_ds = global_ds.transpose('lat', 'lon')
 
-    global_lon = global_ds.longitude.values
-    global_lat = global_ds.latitude.values
+    wet_ins = np.where(global_ds.landseamask.values.ravel() > 50)[0]
+
+    global_lon = global_ds.lon.values
+    global_lat = global_ds.lat.values
+
+    # lat = np.arange(-60, -9.9, 0.1)
+    # lon = np.arange(-180, -119.9, 0.1)
 
     global_lon_m, global_lat_m = np.meshgrid(global_lon, global_lat)
     target_lons_wet = global_lon_m.ravel()[wet_ins]
@@ -280,8 +328,8 @@ def gridding(cycle_ds, cycle_center):
     time_seconds = cycle_center.astype('datetime64[s]').astype('int')
 
     gridded_da = xr.DataArray(new_vals, dims=['latitude', 'longitude'],
-                              coords={'longitude': global_lon,
-                                      'latitude': global_lat})
+                              coords={'latitude': global_lat,
+                                      'longitude': global_lon})
 
     gridded_da = gridded_da.assign_coords(coords={'time': time_seconds})
 
@@ -289,14 +337,14 @@ def gridding(cycle_ds, cycle_center):
     gridded_ds = gridded_da.to_dataset()
 
     counts_da = xr.DataArray(counts, dims=['latitude', 'longitude'],
-                             coords={'longitude': global_lon,
-                                     'latitude': global_lat})
+                             coords={'latitude': global_lat,
+                                     'longitude': global_lon})
     counts_da = counts_da.assign_coords(coords={'time': time_seconds})
 
     gridded_ds['counts'] = counts_da
 
     gridded_ds['mask'] = (['latitude', 'longitude'], np.where(
-        global_ds['maskC'].isel(Z=0) == True, 1, 0))
+        global_ds.landseamask.values > 50, 1, 0))
 
     gridded_ds['mask'].attrs = {'long_name': 'wet/dry boolean mask for grid cell',
                                 'comment': '1 for ocean, otherwise 0'}
@@ -326,8 +374,7 @@ def gridding(cycle_ds, cycle_center):
         'comment': 'seconds since 1970-01-01 00:00:00'
     }
 
-    gridded_ds.attrs['gridding_method'] = \
-        f'Gridded using pyresample resample_gauss with roi={params["roi"]}, \
+    gridded_ds.attrs['gridding_method'] = f'Gridded using pyresample resample_gauss with roi={params["roi"]}, \
             neighbours={params["neighbours"]}'
 
     # gridded_ds.attrs['source'] = 'Combination of ' + \
@@ -374,15 +421,16 @@ def cycle_ds_encoding(cycle_ds):
 
 def cycle_gridding():
     print(f'Gridding files in {INPUT_DIR}')
-
     # The main loop
     for date in ALL_DATES:
-        cycle_start = date
-        cycle_end = cycle_start + np.timedelta64(9, 'D')
-        cycle_center = cycle_start + (cycle_end - cycle_start)/2
+        start = time.time()
 
-        solr_start = f'{cycle_start}'
-        solr_end = f'{cycle_end}'
+        cycle_start = date - np.timedelta64(4, 'D')
+        cycle_end = date + np.timedelta64(5, 'D')
+        cycle_center = date
+
+        solr_start = f'{cycle_start}'.replace('-', '')
+        solr_end = f'{cycle_end}'.replace('-', '')
 
         try:
             # Get data within cycle period
@@ -411,6 +459,9 @@ def cycle_gridding():
             encoding = cycle_ds_encoding(gridded_ds)
 
             gridded_ds.to_netcdf(filepath, encoding=encoding)
+            end = time.time()
+            print(f'Total time: {end - start}')
+            exit()
 
         except Exception as e:
             log.exception(e)

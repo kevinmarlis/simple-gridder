@@ -1,11 +1,12 @@
-ds_name: ecco
-input_dir: "/Users/marlis/Developer/SLI/ECCO_along_track"
-output_dir: ""
-file_format: .nc
-filename_date_regex: '\d{4}-\d{2}-\d{2}'
-grid_frequency: 10
+ds_name: tonga
+input_dir: "/Users/marlis/Developer2/SLI/tonga_output/Datasets"
+output_dir: "/Users/marlis/Developer2/SLI/tonga_output/Grids"
+file_format: .h5
+filename_date_regex: '\d{8}'
+grid_frequency: 5
 
 gridding_params:
-  roi: 6.0e+5
-  sigma: 1.0E+5
-  neighbours: 500
+  roi: 1.5e+5
+  sigma: 4.0e+4
+  neighbours: 2000
+# 10 15 20 january
