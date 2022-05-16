@@ -23,10 +23,17 @@ logging.config.fileConfig(f'logs/log.ini',
 log = logging.getLogger(__name__)
 
 
-def validate_counts(ds):
-    counts = ds['counts'].vals
+def validate_counts(ds, threshold=0.9):
+    '''
+    Checks if counts average is above threshold value.
+    '''
+    counts = ds.sel(latitude=slice(-66, 66))['counts'].values
+    mean = np.nanmean(counts)
 
-    return True
+    if mean > threshold * 500:
+        return True
+
+    return False
 
 
 def calc_linear_trend(ref_dir, cycle_ds):
@@ -330,10 +337,13 @@ def indicators(output_path, reprocess):
             cycle_ds = xr.open_dataset(cycle['filepath_s'])
             cycle_ds.close()
 
-            if not validate_counts(cycle):
-                continue
-
             date = cycle['date_dt'][:10]
+
+            # Skip this grid if it's missing too much data
+            if not validate_counts(cycle_ds):
+                log.exception(
+                    f'Too much data missing from {date} cycle. Skipping.')
+                continue
 
             print(f' - Calculating index values for {date}')
 
