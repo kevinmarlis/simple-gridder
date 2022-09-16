@@ -2,54 +2,26 @@
 """
 
 import logging
-import logging.config
 from argparse import ArgumentParser
-from collections import defaultdict
 from pathlib import Path
 
-import requests
 import yaml
-from webdav3.client import Client
-from matplotlib import pyplot as plt
-import numexpr
 
-from harvester import harvester
-from indicators import indicators
-from cycle_gridding import cycle_gridding
 import txt_engine
 import upload_indicators
-
-from plotting import plot_generation
-from utils import solr_utils
 from conf.global_settings import OUTPUT_DIR
+from cycle_gridding import cycle_gridding
+from harvester import harvester
+from indicators import indicators
+from logs.logconfig import configure_logging
+from plotting import plot_generation
 
-logging.config.fileConfig('logs/log.ini', disable_existing_loggers=False)
-log = logging.getLogger(__name__)
-
-# Set package logging level to WARNING
-logs = ['requets', 'urllib3', 'webdav3',
-        'matplotlib', 'numexpr', 'pyresample']
-for l in logs:
-    logging.getLogger(l).setLevel(logging.WARNING)
+configure_logging(file_timestamp=False)
 
 if not Path.is_dir(OUTPUT_DIR):
-    print('Output directory does not exist. Exiting.')
-    log.fatal('Output directory does not exist. Exiting.')
+    logging.fatal('Output directory does not exist. Exiting.')
     exit()
-print(f'\nUsing output directory: {OUTPUT_DIR}')
-
-# Make sure Solr is up and running
-try:
-    solr_utils.ping_solr()
-except requests.ConnectionError:
-    print('Solr is not currently running! Start Solr and try again.')
-    log.critical('Solr is not currently running! Start Solr and try again.')
-    exit()
-
-ds_status = defaultdict(list)
-
-ROW = '=' * 57
-
+logging.debug(f'\nUsing output directory: {OUTPUT_DIR}')
 
 def create_parser():
     """
@@ -63,11 +35,10 @@ def create_parser():
     parser.add_argument('--options_menu', default=False, action='store_true',
                         help='Display option menu to select which steps in the pipeline to run.')
 
-    parser.add_argument('--force_processing', default=False, action='store_true',
-                        help='Force reprocessing of any existing aggregated cycles.')
-
-    parser.add_argument('--harvested_entry_validation', default=False,
-                        help='verifies each Solr harvester entry points to a valid file.')
+    # parser.add_argument('-h', '--harvest', type=str, default='', dest='harvest_dataset',
+    #                 help='Dataset to harvest. If no dataset given, will harvest all.')
+    # parser.add_argument('-gc', '--grid_cycles', type=str, default='', dest='grid_cycles',
+    #                 help='Dataset to harvest')
 
     return parser
 
@@ -96,20 +67,6 @@ def show_menu():
             f'Unknown option entered, "{selection}", please enter a valid option\n')
 
 
-def print_statuses():
-    print('\n=========================================================')
-    print(
-        '=================== \033[36mPrinting statuses\033[0m ===================')
-    print('=========================================================')
-    for ds, status_list in ds_status.items():
-        print(f'\033[93mPipeline status for {ds}\033[0m:')
-        for msg in status_list:
-            if 'success' in msg:
-                print(f'\t\033[92m{msg}\033[0m')
-            else:
-                print(f'\t\033[91m{msg}\033[0m')
-
-
 def run_harvester(datasets, configs, output_dir):
     """
         Calls the harvester with the dataset specific config file path for each
@@ -119,125 +76,61 @@ def run_harvester(datasets, configs, output_dir):
             datasets (List[str]): A list of dataset names.
             output_dir (Path): The path to the output directory.
     """
-    print(f'\n{ROW}')
-    print(' \033[36mRunning harvesters\033[0m '.center(66, '='))
-    print(f'{ROW}\n')
-
     for ds in datasets:
         try:
-            print(f'\033[93mRunning harvester for {ds}\033[0m')
-            print(ROW)
             ds_config = configs[ds]
             status = harvester(ds_config, output_dir)
-            ds_status[ds].append(status)
-            log.info(f'{ds} harvesting complete. {status}')
-            print('\033[92mHarvest successful\033[0m')
+            logging.info(f'{ds} harvesting complete. {status}')
         except Exception as e:
-            ds_status[ds].append('Harvesting encountered error.')
-            print(e)
-            log.exception(f'{ds} harvesting failed. {e}')
-
-            print('\033[91mHarvesting failed\033[0m')
-        print(ROW)
+            logging.exception(f'{ds} harvesting failed. {e}')
 
 
 def run_cycle_gridding(output_dir):
-    print('\n' + ROW)
-    print(' \033[36mRunning cycle gridding\033[0m '.center(66, '='))
-    print(ROW + '\n')
-
     try:
-        print(f'\033[93mRunning cycle gridding\033[0m')
-        print(ROW)
-
-        status = cycle_gridding(output_dir)
-        ds_status['gridding'].append(status)
-        log.info('Cycle gridding complete.')
-        print('\033[92mCycle gridding complete\033[0m')
+        cycle_gridding(output_dir)
+        logging.info('Cycle gridding complete.')
     except Exception as e:
-        ds_status['gridding'].append('Gridding encountered error.')
-        print(e)
-        log.exception(f'Cycle gridding failed. {e}')
-        print('\033[91mCycle gridding failed\033[0m')
-    print(ROW)
+        logging.exception(f'Cycle gridding failed. {e}')
 
 
-def run_indexing(output_dir, reprocess):
-    """
-        Calls the indicator processing file.
-
-        Parameters:
-            output_dir (Path): The path to the output directory.
-            reprocess: Boolean to force reprocessing
-    """
-    print('\n' + ROW)
-    print(' \033[36mRunning index calculations\033[0m '.center(66, '='))
-    print(ROW + '\n')
-
+def run_indexing(output_dir) -> bool:
     success = False
-
     try:
-        print('\033[93mRunning index calculation\033[0m')
-        print(ROW)
-
-        success = indicators(output_dir, reprocess)
-        msg = 'Indicator calculation successful.'
-        log.info('Index calculation complete.')
-        print('\033[92mIndex calculation successful\033[0m')
+        success = indicators(output_dir)
+        logging.info('Index calculation complete.')
     except Exception as e:
-        print(e)
-        msg = 'Indicator calculation encountered error.'
-        log.error(f'Index calculation failed: {e}')
-        print('\033[91mIndex calculation failed\033[0m')
-    ds_status['indicators'].append(msg)
-    print(ROW)
+        logging.error(f'Index calculation failed: {e}')
 
     return success
 
 
 def run_post_processing(output_dir):
-    plot_success = False
     try:
         plot_generation.main(output_dir)
-        ds_status['plot_generation'].append(
-            'Plot generation successfully completed.')
-        plot_success = True
     except Exception as e:
-        ds_status['plot_generation'].append(f'Plot generation failed: {e}')
-        log.error(f'Plot generation failed: {e}')
+        logging.error(f'Plot generation failed: {e}')
 
     try:
         txt_engine.main(OUTPUT_DIR)
-        log.info('Index txt file creation complete.')
-        txt_success = True
+        logging.info('Index txt file creation complete.')
     except Exception as e:
-        log.error(f'Index txt file creation failed: {e}')
+        logging.error(f'Index txt file creation failed: {e}')
 
 
-def post_to_ftp(OUTPUT_DIR):
+def post_to_ftp(output_dir):
     try:
-        upload_indicators.main(OUTPUT_DIR)
-        log.info('Index txt file upload complete.')
+        upload_indicators.main(output_dir)
+        logging.info('Index txt file upload complete.')
     except Exception as e:
-        print(e)
-        log.error(f'Index txt file upload failed: {e}')
+        logging.error(f'Index txt file upload failed: {e}')
 
 
 if __name__ == '__main__':
 
-    print('\n' + ROW)
     print(' SEA LEVEL INDICATORS PIPELINE '.center(57, '='))
-    print(ROW)
 
     PARSER = create_parser()
     args = PARSER.parse_args()
-
-    # -------------- Harvested Entry Validation --------------
-    if args.harvested_entry_validation:
-        solr_utils.validate_granules()
-
-    # ------------------ Force Reprocessing ------------------
-    REPROCESS = bool(args.force_processing)
 
     # --------------------- Run pipeline ---------------------
 
@@ -247,14 +140,14 @@ if __name__ == '__main__':
 
     DATASET_NAMES = list(configs.keys())
 
-    CHOSEN_OPTION = show_menu() if args.options_menu and not REPROCESS else '1'
+    CHOSEN_OPTION = show_menu() if args.options_menu else '1'
 
     # Run harvesting, gridding, indexing, post processing
     if CHOSEN_OPTION == '1':
         for dataset in DATASET_NAMES:
             run_harvester([dataset], configs, OUTPUT_DIR)
         run_cycle_gridding(OUTPUT_DIR)
-        if run_indexing(OUTPUT_DIR, REPROCESS):
+        if run_indexing(OUTPUT_DIR):
             run_post_processing()
 
     # Run all harvesters
@@ -279,7 +172,7 @@ if __name__ == '__main__':
                 break
 
         CHOSEN_DS = ds_dict[int(ds_index)]
-        print(f'\nHarvesting {CHOSEN_DS} dataset')
+        logging.info(f'\nHarvesting {CHOSEN_DS} dataset')
 
         run_harvester([CHOSEN_DS], configs, OUTPUT_DIR)
 
@@ -289,7 +182,7 @@ if __name__ == '__main__':
 
     # Run indexing (and post processing)
     elif CHOSEN_OPTION == '5':
-        if run_indexing(OUTPUT_DIR, REPROCESS):
+        if run_indexing(OUTPUT_DIR):
             run_post_processing(OUTPUT_DIR)
 
     # Run post processing
@@ -305,5 +198,3 @@ if __name__ == '__main__':
             print('Not posting to ftp.')
         else:
             post_to_ftp(OUTPUT_DIR)
-
-    print_statuses()

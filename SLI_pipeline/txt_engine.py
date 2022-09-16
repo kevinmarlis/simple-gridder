@@ -1,13 +1,9 @@
 import logging
-import logging.config
 from datetime import datetime
 
 import numpy as np
 import xarray as xr
 
-logging.config.fileConfig(f'logs/log.ini',
-                          disable_existing_loggers=False)
-log = logging.getLogger(__name__)
 
 HEADERS = 'HDR Sea Surface Height Anomaly Indicator Data\n\
 HDR\n\

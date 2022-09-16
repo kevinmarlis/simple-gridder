@@ -1,13 +1,8 @@
 import logging
-import logging.config
 
 import yaml
 from paramiko import SSHClient
 from scp import SCPClient
-
-logging.config.fileConfig(f'logs/log.ini',
-                          disable_existing_loggers=False)
-log = logging.getLogger(__name__)
 
 
 def main(output_dir):
@@ -27,7 +22,7 @@ def main(output_dir):
         print('Connected to FTP.')
     except Exception as e:
         print(e)
-        log.error(f'Failed to connect to FTP. {e}')
+        logging.error(f'Failed to connect to FTP. {e}')
         raise(f'FTP connection error. {e}')
 
     try:
@@ -35,8 +30,8 @@ def main(output_dir):
         with SCPClient(ssh.get_transport()) as scp:
             scp.put(data_path, upload_path)
         print('Indicators successfully pushed to FTP')
-        log.debug('Indicators successfully pushed to FTP')
+        logging.debug('Indicators successfully pushed to FTP')
     except Exception as e:
         print(e)
-        log.error(f'Indicators failed to push to FTP. {e}')
+        logging.error(f'Indicators failed to push to FTP. {e}')
         raise(f'Unable to upload file. {e}')

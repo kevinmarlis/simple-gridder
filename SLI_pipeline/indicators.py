@@ -1,7 +1,6 @@
-"""
-
-"""
+from glob import glob
 import logging
+import os
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -15,12 +14,6 @@ with warnings.catch_warnings():
     warnings.simplefilter('ignore', UserWarning)
     import pyresample as pr
     from pyresample.utils import check_and_wrap
-
-from utils import file_utils, solr_utils
-
-logging.config.fileConfig(f'logs/log.ini',
-                          disable_existing_loggers=False)
-log = logging.getLogger(__name__)
 
 
 def validate_counts(ds, threshold=0.9):
@@ -217,56 +210,48 @@ def concat_files(indicator_dir, type, pattern=''):
     return concat_ds
 
 
-def indicators(output_path, reprocess):
+def indicators(output_path):
     """
     This function calculates indicator values for each regridded cycle. Those are
     saved locally to avoid overloading memory. All locally saved indicator files 
     are combined into a single netcdf spanning the entire 1992 - NOW time period.
     """
+    # Get all gridded cycles
+    grids = glob(f'{output_path}/gridded_cycles/*.nc')
+    grids.sort()
 
-    # Query for indicator doc on Solr
-    fq = ['type_s:indicator']
-    indicator_query = solr_utils.solr_query(fq)
-    update = len(indicator_query) == 1
+    update = False
 
-    if not update or reprocess:
-        modified_time = '1992-01-01T00:00:00Z'
+    # Check if we need to recalculate indicators
+    data_path = f'{output_path}/indicator/indicators.nc'
+    if os.path.exists(data_path):
+        ind_mod_time = datetime.fromtimestamp(os.path.getmtime(data_path))
+        for grid in grids:
+            grid_mod_time = datetime.fromtimestamp(os.path.getmtime(grid))
+
+            if grid_mod_time >= ind_mod_time:
+                update = True
+
+                backup_dir = Path(f'{output_path}/indicator/backups')
+                backup_dir.mkdir(parents=True, exist_ok=True)
+
+                # Copy old indicator file as backup
+                try:
+                    print('Making backup of existing indicator file.\n')
+                    backup_path = f'{backup_dir}/indicator_{ind_mod_time}.nc'
+                    copyfile(data_path, backup_path)
+                except Exception as e:
+                    logging.exception(f'Error creating indicator backup: {e}')
+                break
     else:
-        indicator_metadata = indicator_query[0]
-        modified_time = indicator_metadata['modified_time_dt']
-
-        backup_dir = Path(f'{output_path}/indicator/backups')
-        backup_dir.mkdir(parents=True, exist_ok=True)
-
-        # Copy old indicator file as backup
-        try:
-            print('Making backup of existing indicator file.\n')
-            indicator_path = indicator_metadata['indicator_filepath_s']
-            old_time = str(indicator_metadata['modified_time_dt'])
-            old_time = old_time.replace(':', '').replace('Z', '')
-
-            backup_path = f'{backup_dir}/indicator_{old_time}.nc'
-            copyfile(indicator_path, backup_path)
-
-        except Exception as e:
-            log.exception(f'Error creating indicator backup: {e}')
-
-    # Query for update cycles after modified_time
-    fq = ['type_s:gridded_cycle', 'processing_success_b:true',
-          f'processing_time_dt:[{modified_time} TO NOW]']
-
-    updated_cycles = solr_utils.solr_query(fq, sort='start_date_dt asc')
-
+        update = True
+    
     # ONLY PROCEED IF THERE ARE CYCLES NEEDING CALCULATING
-    if not updated_cycles:
-        print('No regridded cycles modified since last index calculation.')
-        return False
+    if not update:
+        logging.info('No regridded cycles modified since last index calculation.')
+        return
 
-    time_format = "%Y-%m-%dT%H:%M:%S"
-
-    chk_time = datetime.utcnow().strftime(time_format)
-
-    print('Calculating new index values for modified cycles.\n')
+    logging.info('Calculating new index values for cycles.')
 
     # ==============================================
     # Pattern preparation
@@ -327,21 +312,21 @@ def indicators(output_path, reprocess):
     # Calculate indicators for each updated (re)gridded cycle
     # ==============================================
 
-    for cycle in updated_cycles:
+    output_dir = output_path / 'indicator' / 'daily'
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for cycle in grids:
 
         try:
-            # Setup output directories
-            output_dir = output_path / 'indicator' / 'daily'
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            cycle_ds = xr.open_dataset(cycle['filepath_s'])
+            cycle_ds = xr.open_dataset(cycle)
             cycle_ds.close()
 
-            date = cycle['date_dt'][:10]
+            date = cycle.split('_')[-1][:8]
+            date = f'{date[:4]}-{date[4:6]}-{date[6:8]}'
 
             # Skip this grid if it's missing too much data
             if not validate_counts(cycle_ds):
-                log.exception(
+                logging.exception(
                     f'Too much data missing from {date} cycle. Skipping.')
                 continue
 
@@ -431,7 +416,7 @@ def indicators(output_path, reprocess):
                        globals_ds, pattern_and_anom_das)
 
         except Exception as e:
-            log.exception(e)
+            logging.exception(e)
 
     print('\nCycle index calculation complete. ')
     print('Merging and saving final indicator products.\n')
@@ -463,37 +448,4 @@ def indicators(output_path, reprocess):
         globals_ds = None
 
     except Exception as e:
-        log.exception(e)
-
-    # ==============================================
-    # Create or update indicator on Solr
-    # ==============================================
-
-    indicator_filepath = indicator_dir / 'indicators.nc'
-
-    indicator_meta = {
-        'type_s': 'indicator',
-        'start_date_dt': np.datetime_as_string(indicators.time.values[0], unit='s'),
-        'end_date_dt': np.datetime_as_string(indicators.time.values[-1], unit='s'),
-        'modified_time_dt': chk_time,
-        'indicator_filename_s': 'indicators.nc',
-        'indicator_filepath_s': str(indicator_filepath),
-        'indicator_checksum_s': file_utils.md5(indicator_filepath),
-        'indicator_file_size_l': indicator_filepath.stat().st_size
-    }
-
-    if update:
-        indicator_meta['prior_end_dt'] = indicator_query[0]['end_date_dt']
-        indicator_meta['id'] = indicator_query[0]['id']
-
-    # Update Solr with dataset metadata
-    resp = solr_utils.solr_update([indicator_meta], r=True)
-
-    if resp.status_code == 200:
-        status = 'Successfully created or updated Solr index document'
-        print(f'\n{status}')
-    else:
-        status = 'Failed to create or update Solr index document'
-        print(f'\n{status}')
-
-    return True
+        logging.exception(e)
