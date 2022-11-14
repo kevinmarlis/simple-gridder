@@ -16,6 +16,7 @@ with warnings.catch_warnings():
     from pyresample.utils import check_and_wrap
 
 
+
 def validate_counts(ds, threshold=0.9):
     '''
     Checks if counts average is above threshold value.
@@ -249,7 +250,7 @@ def indicators(output_path):
     # ONLY PROCEED IF THERE ARE CYCLES NEEDING CALCULATING
     if not update:
         logging.info('No regridded cycles modified since last index calculation.')
-        return
+        return True
 
     logging.info('Calculating new index values for cycles.')
 
@@ -449,3 +450,6 @@ def indicators(output_path):
 
     except Exception as e:
         logging.exception(e)
+        return False
+
+    return True
