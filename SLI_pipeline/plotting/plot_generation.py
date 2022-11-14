@@ -1,15 +1,10 @@
 from pathlib import Path
 import logging
-import logging.config
 import warnings
 import numpy as np
 import xarray as xr
 from matplotlib import pyplot as plt
-from utils import solr_utils
 
-logging.config.fileConfig(f'logs/log.ini',
-                          disable_existing_loggers=False)
-log = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore")
 
@@ -22,13 +17,7 @@ def generate_plots(output_dir, ind_path):
     pdo_start_time = end_time - np.timedelta64(365*10, 'D')
     spatial_start_time = end_time - np.timedelta64(365*7, 'D')
 
-    # Query solr to get previous indicator time
-    fq = ['type_s:indicator']
-    r = solr_utils.solr_query(fq)
-    if 'prior_end_dt' in r[0].keys():
-        slice_start = np.datetime64(r[0]['prior_end_dt'])
-    else:
-        slice_start = None
+    slice_start = None
 
     output_path = output_dir / 'indicator/plots'
     output_path.mkdir(parents=True, exist_ok=True)
