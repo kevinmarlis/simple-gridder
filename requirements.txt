@@ -11,3 +11,4 @@ h5py==3.2.1
 paramiko==2.7.2
 scp==0.14.0
 scipy==1.7.3
+cartopy

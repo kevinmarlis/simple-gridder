@@ -16,6 +16,7 @@ with warnings.catch_warnings():
     from pyresample.utils import check_and_wrap
 
 from conf.global_settings import FILE_FORMAT
+import enso_grids
 
 
 def collect_data(output_dir, start, end):
@@ -32,9 +33,7 @@ def collect_data(output_dir, start, end):
         '''
         Removes MERGED_ALT granules
         '''
-        if "MERGED_ALT" in f:
-            return False
-        return True
+        return "MERGED_ALT" not in f
 
     # Get reference mission granules
     ref_granules = glob(f'{output_dir}/datasets/MERGED_ALT/harvested_granules/**/*{FILE_FORMAT}')
@@ -44,12 +43,12 @@ def collect_data(output_dir, start, end):
     # Get other granules
     other_granules = glob(f'{output_dir}/datasets/**/**/**/*{FILE_FORMAT}')
     other_granules.sort()
+
     other_granules = filter(date_filter, other_granules)
     other_granules = filter(ref_filter, other_granules)
 
-    cycle_granules = list(ref_granules) + list(other_granules)
+    cycle_granules = list(other_granules) + list(ref_granules)
     cycle_granules = sorted(cycle_granules, key=lambda f: f.split('/')[-1].split('.')[0][3:])
-
     return cycle_granules
 
 
@@ -119,20 +118,20 @@ def merge_granules(cycle_granules):
         }
 
         # Check for duplicate time values. Drop if they are true duplicates
-        all_times = ds.time.values
-        seen = set()
-        seen_add = seen.add
-        seen_twice = list(x for x in all_times if x in seen or seen_add(x))
-        if seen_twice:
-            _, index = np.unique(ds['time'], return_index=True)
-            ds = ds.isel(time=index)
+        # all_times = ds.time.values
+        # seen = set()
+        # seen_add = seen.add
+        # seen_twice = list(x for x in all_times if x in seen or seen_add(x))
+        # if seen_twice:
+        #     _, index = np.unique(ds['time'], return_index=True)
+        #     ds = ds.isel(time=index)
 
         granules.append(ds)
 
-    cycle_ds = xr.concat((granules), dim='time') if len(
+    cycle_ds = xr.concat((granules), dim='time', data_vars="all") if len(
         granules) > 1 else granules[0]
     cycle_ds = cycle_ds.sortby('time')
-
+    cycle_ds.to_netcdf('cycle_ds.nc')
     return cycle_ds
 
 
@@ -150,11 +149,11 @@ def gauss_grid(ssha_nn_obj, global_obj, params):
                                          fill_value=np.NaN, neighbours=params['neighbours'],
                                          nprocs=4, with_uncert=True)
 
-    new_vals_2d = np.zeros_like(global_obj['ds'].area.values) * np.nan
+    new_vals_2d = np.full_like(global_obj['ds'].maskC.isel(Z=0).values, np.nan, np.double)
     for i, val in enumerate(new_vals):
         new_vals_2d.ravel()[global_obj['wet'][i]] = val
 
-    counts_2d = np.zeros_like(global_obj['ds'].area.values) * np.nan
+    counts_2d = np.full_like(global_obj['ds'].maskC.isel(Z=0).values, np.nan, np.double)
     for i, val in enumerate(counts):
         counts_2d.ravel()[global_obj['wet'][i]] = val
     return new_vals_2d, counts_2d
@@ -165,7 +164,7 @@ def gridding(cycle_ds, date, sources):
     ref_path = Path().resolve().parent / 'ref_files'
 
     # Prepare global map
-    global_path = ref_path / 'GRID_GEOMETRY_ECCO_V4r4_latlon_0p50deg.nc'
+    global_path = ref_path / 'UPDATED_GRID_MASK_latlon.nc'
     global_ds = xr.open_dataset(global_path)
 
     wet_ins = np.where(global_ds.maskC.isel(Z=0).values.ravel() > 0)[0]
@@ -309,10 +308,11 @@ def cycle_ds_encoding(cycle_ds):
 
 def cycle_gridding(output_dir):
     ALL_DATES = np.arange('1992-10-05', 'now', 7, dtype='datetime64[D]')
+    ALL_DATES = np.arange('2012-08-20', 'now', 7, dtype='datetime64[D]')
+
 
     failed_grids = []
 
-    # The main loop
     for date in ALL_DATES:
         cycle_start = date - np.timedelta64(5, 'D')
         cycle_end = cycle_start + np.timedelta64(9, 'D')
@@ -342,6 +342,8 @@ def cycle_gridding(output_dir):
             filepath = grid_dir / filename
 
             gridded_ds.to_netcdf(filepath, encoding=encoding)
+
+            enso_grids.make_grid(gridded_ds)
 
         except Exception as e:
             failed_grids.append(date)
