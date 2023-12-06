@@ -31,7 +31,6 @@ def get_log_level(log_level) -> int:
         'INFO': logging.INFO,
         'DEBUG': logging.DEBUG,
         'WARNING': logging.WARNING,
-        'WARN': logging.WARNING,
     }
 
     return value_map.get(log_level, logging.INFO)

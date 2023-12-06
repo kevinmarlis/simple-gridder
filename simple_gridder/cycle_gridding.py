@@ -3,7 +3,6 @@ import logging
 import os
 from typing import Iterable
 import warnings
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -19,7 +18,6 @@ with warnings.catch_warnings():
     from pyresample.utils import check_and_wrap
 
 from conf.global_settings import DATA_DIR, OUTPUT_DIR
-import enso_grids
 
 REF_PATH = Path().resolve().parent / 'ref_files'
 ROI = 6e5
@@ -67,51 +65,30 @@ class Datasets():
    
 ds_configs = Datasets()
 
-def get_valid_sats(start: np.datetime64, end: np.datetime64) -> Iterable[str]:
+def get_valid_sat(start: np.datetime64, end: np.datetime64, satellite: str) -> Iterable[str]:
     '''
     Returns list of satellites whose coverage falls within 10 day window
     '''
-    valid_sats = []
-    for k,v in ds_configs.configs.items():
-        config_start = np.datetime64(v.get('start'))
-        config_end = np.datetime64('today') if v.get('end') == 'now' else np.datetime64(v.get('end'))
-        latest_start = max(start, config_start)
-        earliest_end = min(end, config_end)
-        delta = (earliest_end - latest_start) + 1
-        if max(0, delta):
-            valid_sats.append(k)
-    return valid_sats
+    v = ds_configs.configs[satellite]
+    config_start = np.datetime64(v.get('start'))
+    config_end = np.datetime64('today') if v.get('end') == 'now' else np.datetime64(v.get('end'))
+    latest_start = max(start, config_start)
+    earliest_end = min(end, config_end)
+    delta = (earliest_end - latest_start) + 1
+    if max(0, delta):
+        return True
+    return False
 
-def collect_data(start: np.datetime64, end: np.datetime64) -> Iterable[str]:   
+def collect_data(start: np.datetime64, end: np.datetime64, satellite: str) -> Iterable[str]:   
     '''
     Collects valid filepaths for a given 10 day window
     '''
     window_dates = [str(d).replace("-","") for d in np.arange(start, end, 1, dtype='datetime64[D]')]
     window_granules = []
-    for sat in get_valid_sats(start, end):
-        window_granules.extend([f'{DATA_DIR}/{sat}/{filename}' for filename in os.listdir(f'{DATA_DIR}/{sat}') if filename[-11:-3] in window_dates])
-    window_granules = sorted(window_granules, key=lambda f: f.split('/')[-1].split('_')[-1][3:])
+    if get_valid_sat(start, end, satellite):
+        window_granules = [f'{DATA_DIR}/{satellite}/{filename}' for filename in os.listdir(f'{DATA_DIR}/{satellite}') if filename[-11:-3] in window_dates]
+        window_granules = sorted(window_granules, key=lambda f: f.split('/')[-1].split('_')[-1][3:])
     return window_granules
-
-
-def check_updating(cycle_granules: Iterable[str], date: np.timedelta64) -> bool:
-    '''
-    Checks if window requires (re)gridding by comparing source granules with
-    gridded file.
-    '''
-    
-    # Check if gridded cycle exists
-    grid_path = f'{OUTPUT_DIR}/gridded_cycles/ssha_global_half_deg_{str(date).replace("-", "")}.nc'
-    if not os.path.exists(grid_path):
-        return True
-
-    grid_mod_time = datetime.fromtimestamp(os.path.getmtime(grid_path))
-    # Check if individual granules have been updated
-    for granule in cycle_granules:
-        mod_time = datetime.fromtimestamp(os.path.getmtime(granule))
-        if mod_time > grid_mod_time:
-            return True
-    return False
 
 
 def apply_s6_correction(ds: xr.Dataset, filename: str) -> xr.Dataset:
@@ -325,44 +302,43 @@ def cycle_ds_encoding(ds: xr.Dataset) -> dict:
     return encoding
 
 
-def cycle_gridding():
+def save_netcdf(ds, date, satellite):
+    # Save the gridded cycle
+    encoding = cycle_ds_encoding(ds)
+
+    grid_dir = OUTPUT_DIR / satellite
+    grid_dir.mkdir(parents=True, exist_ok=True)
+    filename = f'ssha_global_half_deg_{str(date).replace("-", "")}.nc'
+    filepath = grid_dir / filename
+
+    ds.to_netcdf(filepath, encoding=encoding)
+
+def cycle_gridding(satellite: str, start: str, end: str='now'):
     '''
     Creates gridded netCDFs for each 10 day window occuring every 7 days
     '''
     ALL_DATES = np.arange('1992-10-05', 'now', 7, dtype='datetime64[D]')
+    
+    mindex = np.abs([np.datetime64(start) - date for date in ALL_DATES]).argmin(0)
+    maxdex = np.abs([np.datetime64(end) - date for date in ALL_DATES]).argmin(0)
+    dates_to_grid = ALL_DATES[mindex:maxdex + 1]
 
     failed_grids = []
-    for date in ALL_DATES[:-1]:
+    for date in dates_to_grid:
         cycle_start = date - np.timedelta64(5, 'D')
         cycle_end = cycle_start + np.timedelta64(9, 'D')
 
         try:
-            cycle_granules = collect_data(cycle_start, cycle_end)
+            cycle_granules = collect_data(cycle_start, cycle_end, satellite)
             if not cycle_granules:
                 logging.info(f'No granules found for {date} cycle')
                 continue
-
-            if not check_updating(cycle_granules, date):
-                logging.info(f'No update needed for {date} cycle')
-                continue
+            sources = list(set([g.split('/')[-2].split('/')[0] for g in cycle_granules]))
 
             logging.info(f'Processing {date} cycle')
             cycle_ds = merge_granules(cycle_granules)
-            sources = list(set([g.split('/')[-2].split('/')[0] for g in cycle_granules]))
-
             gridded_ds = gridding(cycle_ds, date, sources)
-
-            # Save the gridded cycle
-            encoding = cycle_ds_encoding(gridded_ds)
-
-            grid_dir = OUTPUT_DIR / 'gridded_cycles'
-            grid_dir.mkdir(parents=True, exist_ok=True)
-            filename = f'ssha_global_half_deg_{str(date).replace("-", "")}.nc'
-            filepath = grid_dir / filename
-
-            gridded_ds.to_netcdf(filepath, encoding=encoding)
-
-            # enso_grids.make_grid(gridded_ds)
+            save_netcdf(gridded_ds, date, satellite)
 
         except Exception as e:
             failed_grids.append(date)
