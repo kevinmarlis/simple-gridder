@@ -4,12 +4,16 @@ import warnings
 import numpy as np
 import xarray as xr
 from matplotlib import pyplot as plt
-
+from conf.global_settings import OUTPUT_DIR
 
 warnings.filterwarnings("ignore")
 
 
-def generate_plots(output_dir, ind_path):
+def generate_plots():
+    '''
+    Generates sanity check plots for each indicator and GMSL
+    '''
+    ind_path = OUTPUT_DIR / 'indicator/indicators.nc'
     vars = ['enso_index', 'pdo_index', 'iod_index', 'spatial_mean']
     ds = xr.open_dataset(ind_path)
     end_time = ds.time.values[-1]
@@ -19,7 +23,7 @@ def generate_plots(output_dir, ind_path):
 
     slice_start = None
 
-    output_path = output_dir / 'indicator/plots'
+    output_path = OUTPUT_DIR / 'indicator/plots'
     output_path.mkdir(parents=True, exist_ok=True)
 
     for var in vars:
@@ -66,11 +70,3 @@ def generate_plots(output_dir, ind_path):
         plt.savefig(f'{output_path}/{var}.png', dpi=150)
         # plt.show()
         plt.cla()
-
-
-def main(output_dir):
-    print('\nGenerating plots from indicators')
-
-    ind_path = output_dir / 'indicator/indicators.nc'
-
-    generate_plots(output_dir, ind_path)

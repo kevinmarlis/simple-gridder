@@ -3,7 +3,7 @@ from datetime import datetime
 
 import numpy as np
 import xarray as xr
-
+from conf.global_settings import OUTPUT_DIR
 
 HEADERS = 'HDR Sea Surface Height Anomaly Indicator Data\n\
 HDR\n\
@@ -86,7 +86,9 @@ def create_lines(dates, ds):
     return lines
 
 
-def generate_txt(output_path, ind_path):
+def generate_txt():
+    ind_path = OUTPUT_DIR / 'indicator/indicators.nc'
+    output_path = OUTPUT_DIR / f'indicator/indicator_data.txt'
 
     ds = xr.open_dataset(ind_path)
 
@@ -103,13 +105,3 @@ def generate_txt(output_path, ind_path):
 
         for line in lines:
             f.write(line)
-
-
-def main(output_dir):
-    print('Generating txt file from indicators')
-
-    ind_path = output_dir / 'indicator/indicators.nc'
-
-    output_path = output_dir / f'indicator/indicator_data.txt'
-
-    generate_txt(output_path, ind_path)
