@@ -30,5 +30,3 @@ ___
 ### txt_engine.py
 
 ### plotting/plot_generation.py
-
-### upload_indicators.py

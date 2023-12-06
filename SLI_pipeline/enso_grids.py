@@ -6,7 +6,8 @@ from netCDF4 import default_fillvals  # pylint: disable=no-name-in-module
 import numpy as np
 import xarray as xr
 from conf.global_settings import OUTPUT_DIR
-from scipy.interpolate import griddata
+from glob import glob
+import os
 
 warnings.filterwarnings('ignore')
 
@@ -16,53 +17,31 @@ def get_decimal_year(dt: datetime):
     return dt.year + ((dt - year_start).total_seconds() /  # seconds so far
         float((year_end - year_start).total_seconds()))  # seconds in year
 
-def interp(lats, lons, data):
-    array = np.ma.masked_invalid(data)
-    xx, yy = np.meshgrid(lons, lats)
-    x1 = xx[~array.mask]
-    y1 = yy[~array.mask]
-    newarr = array[~array.mask]
-
-    nn_data = griddata((x1, y1), newarr.ravel(), (xx, yy),  method='nearest')
-
-    grid_x, grid_y = np.meshgrid(np.arange(0.125,360.125, 0.25), np.arange(-89.875,90.125,0.25))
-
-    interpolated_values = griddata((xx.flatten(), yy.flatten()), nn_data.ravel(), (grid_x, grid_y), method='cubic')
-    interp_values_2d = np.reshape(interpolated_values, (len(grid_x), len(grid_y[0])))
-
-    return interp_values_2d
+def interp(ds: xr.Dataset) -> xr.Dataset:
+    new_lats = np.arange(-89.875,90.125,0.25)
+    new_lons = np.arange(-9.825,369.825, 0.25)
+    interp_ds = ds.interp(longitude=new_lons, latitude=new_lats)
+    return interp_ds
 
 
-def smoothing(ds, date):
+def smoothing(ds):
     ref_path = Path().resolve().parent / 'ref_files'
     hr_mask_ds = xr.open_dataset(ref_path / 'HR_GRID_MASK_latlon.nc')
-
-    counts = np.where(np.isnan(ds.counts.values), 0, ds.counts.values)
-    data = np.where(counts < 400, np.nan, ds.SSHA.values)
-    interp_ssha_2d = interp(ds.latitude.values, ds.longitude.values, data)
-
-    interp_ds = xr.Dataset(
-        data_vars=dict(
-            SSHA=(['latitude', 'longitude'], interp_ssha_2d),
-        ),
-        coords=dict(
-            latitude=(['latitude'], np.arange(-89.875,90.125,0.25)),
-            longitude=(['longitude'], np.arange(0.125, 360.125, 0.25)),
-            time=(['time'], [date])
-        )
-    )
-
-    interp_ds.time.encoding['units'] = 'days since 1992-01-01'
-
-    # Do boxcar averaging
-    dsr = interp_ds.rolling({'longitude':38, 'latitude':16}, min_periods=1).mean()
-    interp_ds.shift
     hr_mask_ds.coords['longitude'] = hr_mask_ds.coords['longitude'] % 360
     hr_mask_ds = hr_mask_ds.sortby(hr_mask_ds.longitude)
 
-    dsr.SSHA.values = np.where(hr_mask_ds.maskC.values == 0, np.nan, dsr.SSHA.values)
+    # interpolation
+    interp_ds = interp(ds)
 
-    dsr_subset = dsr.sel(latitude=slice(-82,82))
+    # Do boxcar averaging
+    dsr = interp_ds.rolling({'longitude':38, 'latitude':16}, min_periods=1, center=True).mean()
+    dsr = dsr.sel(longitude=slice(0,360))
+    
+    dsr.SSHA.values = np.where(hr_mask_ds.maskC.values == 0, np.nan, dsr.SSHA.values)
+    filtered_ds = dsr.where(dsr.counts > 475, np.nan)
+    filtered_ds.SSHA.values = np.where(hr_mask_ds.maskC.values == 0, np.nan, filtered_ds.SSHA.values)
+
+    dsr_subset = filtered_ds.sel(latitude=slice(-82,82))
 
     return dsr_subset
 
@@ -128,7 +107,7 @@ def make_grid(ds):
     ds.coords['longitude'] = (ds.coords['longitude']) % 360
     ds = ds.sortby(ds.longitude)
     data = ds.SSHA.values * 1000
-    date = datetime.utcfromtimestamp(ds.time.values)
+    date = datetime.strptime(str(ds.time.values)[:10], '%Y-%m-%d')
     date_str = datetime.strftime(date, '%Y%m%d')
 
     removed_cycle_trend_data = remove_trends(data, date)
@@ -136,7 +115,7 @@ def make_grid(ds):
 
     padded_ds = padding(ds)
 
-    smooth_ds = smoothing(padded_ds, date)
+    smooth_ds = smoothing(padded_ds)
     smooth_ds.SSHA.attrs = ds.SSHA.attrs
     smooth_ds.SSHA.attrs['units'] = 'mm'
     smooth_ds.SSHA.attrs['valid_min'] = np.nanmin(smooth_ds.SSHA.values)
@@ -149,4 +128,15 @@ def make_grid(ds):
     encoding = cycle_ds_encoding(smooth_ds)
 
     fname = f'ssha_enso_{date_str}.nc'
-    smooth_ds.to_netcdf(f'{OUTPUT_DIR}/ENSO_grids/{fname}')
+    smooth_ds.to_netcdf(f'{OUTPUT_DIR}/ENSO_grids/{fname}', encoding=encoding)
+    
+if __name__ == '__main__':
+    simple_grid_paths = glob(f'{OUTPUT_DIR}/gridded_cycles/*.nc')
+    simple_grid_paths.sort()
+    for f in simple_grid_paths:
+        filename = f.split('/')[-1]
+        if filename >= 'ssha_global_half_deg_20180521.nc':
+            print(f)
+            ds = xr.open_dataset(f)
+            make_grid(ds)
+            break
